@@ -106,7 +106,7 @@ _Avoid_: Watch cap, Viewing threshold
 ### Notifications
 
 **Notification**:
-A message Cadence sends a person to tell them something that concerns them has happened.
+A message Cadence sends a person about an action they didn't initiate themselves; the buyer's Purchase confirmation is the one exception.
 _Avoid_: Alert, Message, Activity
 
 **Notification Feed**:
