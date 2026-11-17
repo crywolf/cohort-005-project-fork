@@ -1,6 +1,13 @@
-import { Outlet } from "react-router";
+import { Outlet, useSearchParams } from "react-router";
 import type { Route } from "./+types/layout.app";
 import { Sidebar } from "~/components/sidebar";
+import {
+  NOTIFICATION_VARIANTS,
+  VariantCompactBell,
+  VariantGroupedBell,
+  VariantDrawerBell,
+} from "~/components/notification-prototype";
+import { PrototypeSwitcher } from "~/components/prototype-switcher";
 import { DevUI } from "~/components/dev-ui";
 import { Toaster } from "sonner";
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
@@ -227,12 +234,28 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     isTeamAdmin: userIsTeamAdmin,
   } = loaderData;
 
+  // PROTOTYPE (wayfinder #5): notification UI variants, active whenever a
+  // ?variant= param is present in a development build.
+  const [searchParams] = useSearchParams();
+  const prototypeVariant = import.meta.env.DEV
+    ? searchParams.get("variant")
+    : null;
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         currentUser={currentUser}
         recentCourses={recentCourses}
         isTeamAdmin={userIsTeamAdmin}
+        notificationBellSlot={
+          prototypeVariant === "compact" ? (
+            <VariantCompactBell />
+          ) : prototypeVariant === "grouped" ? (
+            <VariantGroupedBell />
+          ) : prototypeVariant === "drawer" ? (
+            <VariantDrawerBell />
+          ) : undefined
+        }
       />
       <main className="flex-1 overflow-y-auto">
         <Outlet />
@@ -244,6 +267,12 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
         countryTierInfo={countryTierInfo}
         countries={countries}
       />
+      {prototypeVariant && (
+        <PrototypeSwitcher
+          variants={[...NOTIFICATION_VARIANTS]}
+          current={prototypeVariant}
+        />
+      )}
       <Toaster position="bottom-right" richColors closeButton />
     </div>
   );
