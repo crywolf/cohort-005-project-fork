@@ -112,3 +112,11 @@ _Avoid_: Alert, Message, Activity
 **Notification Feed**:
 The place inside Cadence where a person sees their Notifications.
 _Avoid_: Inbox, Activity feed
+
+**Notification Category**:
+A group of Notifications a person can configure together: Discussion activity, Purchases & refunds, New students. A Category is user-level, not role-scoped; it produces Notifications only when its events fire at that person.
+_Avoid_: Type, Kind, Preference (on its own)
+
+**Notification Preference**:
+A person's on/off setting for a Notification Category on a channel. Default on; Platform Admin Notifications are not a Preference. Off means the Notification is never sent.
+_Avoid_: Setting, Opt-out, Mute
