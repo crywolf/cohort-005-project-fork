@@ -12,6 +12,9 @@ import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
 import { UserRole, RefundStatus, users } from "~/db/schema";
 import { AlertTriangle } from "lucide-react";
+// PROTOTYPE (throwaway) — wayfinder ticket #13; replaced by the real
+// preferences section once a variant wins.
+import { NotificationPreferencesPrototype } from "~/components/preferences-prototype";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
 import { eq } from "drizzle-orm";
@@ -187,6 +190,10 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
           </fetcher.Form>
         </CardContent>
       </Card>
+
+      <NotificationPreferencesPrototype
+        role={user.role as unknown as "student" | "instructor" | "admin"}
+      />
 
       {refundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">
