@@ -3,15 +3,18 @@ import { useNotificationStore } from "@knocklabs/react";
 import type { Feed, Recipient } from "@knocklabs/client";
 import {
   Bell,
+  Check,
   MessageSquare,
   ReceiptText,
   ShoppingBag,
+  Trash2,
   UserPlus,
   UsersRound,
   X,
 } from "lucide-react";
 import {
   describeFeedItem,
+  isUnreadFeedItem,
   relativeTime,
   type FeedItemActor,
 } from "~/lib/notification-display";
@@ -103,14 +106,25 @@ export function NotificationDrawer({
               {metadata.unread_count} new · {metadata.total_count} total
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close notifications"
-          >
-            <X className="size-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            {metadata.unread_count > 0 && (
+              <button
+                type="button"
+                onClick={() => void feedClient.markAllAsRead()}
+                className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Mark all as read
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Close notifications"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto" onScroll={onScroll}>
@@ -125,12 +139,12 @@ export function NotificationDrawer({
                   ...item,
                   actors: item.actors.map(actorOf),
                 });
-                const unread = item.read_at === null;
+                const unread = isUnreadFeedItem(item);
                 return (
                   <li
                     key={item.id}
                     className={cn(
-                      "flex gap-3 px-4 py-3",
+                      "group flex gap-3 px-4 py-3",
                       unread && "bg-blue-50 dark:bg-blue-950/40"
                     )}
                   >
@@ -156,12 +170,36 @@ export function NotificationDrawer({
                           )}
                           <span className="text-muted-foreground">{display.action}</span>
                         </p>
-                        {unread && (
-                          <span
-                            className="mt-1.5 size-2 shrink-0 rounded-full bg-blue-500"
-                            aria-label="Unread"
-                          />
-                        )}
+                        <div className="flex shrink-0 items-center gap-1">
+                          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            {unread && (
+                              <button
+                                type="button"
+                                onClick={() => void feedClient.markAsRead(item)}
+                                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                aria-label="Mark as read"
+                                title="Mark as read"
+                              >
+                                <Check className="size-3.5" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void feedClient.markAsArchived(item)}
+                              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label="Delete notification"
+                              title="Delete"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          {unread && (
+                            <span
+                              className="mt-1.5 size-2 rounded-full bg-blue-500 group-hover:hidden"
+                              aria-label="Unread"
+                            />
+                          )}
+                        </div>
                       </div>
                       {display.contextLine && (
                         <p className="mt-0.5 truncate text-sm text-muted-foreground">
