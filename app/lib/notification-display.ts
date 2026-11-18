@@ -139,6 +139,20 @@ export function describeFeedItem(item: FeedItemLike): FeedItemDisplay {
   };
 }
 
+export interface FeedItemReadState {
+  read_at?: string | null;
+  seen_at?: string | null;
+}
+
+/**
+ * Whether a feed item still counts as unread. Unread is read-based
+ * (`read_at` is null), deliberately not seen-based: an item the user has
+ * glanced at but not read keeps its dot, its wash, and its badge count.
+ */
+export function isUnreadFeedItem(item: FeedItemReadState): boolean {
+  return item.read_at === null;
+}
+
 /**
  * The signed-in clicker, as far as the deep-link mapping may know them: the
  * app-level role plus whether they administer a Team. Kept structural so the

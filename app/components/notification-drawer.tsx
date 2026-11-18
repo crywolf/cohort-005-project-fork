@@ -4,9 +4,11 @@ import { useNotificationStore } from "@knocklabs/react";
 import type { Feed, FeedItem, Recipient } from "@knocklabs/client";
 import {
   Bell,
+  Check,
   MessageSquare,
   ReceiptText,
   ShoppingBag,
+  Trash2,
   UserPlus,
   UsersRound,
   X,
@@ -14,6 +16,7 @@ import {
 import {
   describeFeedItem,
   destinationForFeedItem,
+  isUnreadFeedItem,
   relativeTime,
   type FeedItemActor,
   type NotificationViewer,
@@ -120,14 +123,25 @@ export function NotificationDrawer({
               {metadata.unread_count} new · {metadata.total_count} total
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close notifications"
-          >
-            <X className="size-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            {metadata.unread_count > 0 && (
+              <button
+                type="button"
+                onClick={() => void feedClient.markAllAsRead()}
+                className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Mark all as read
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Close notifications"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto" onScroll={onScroll}>
@@ -142,10 +156,34 @@ export function NotificationDrawer({
                   ...item,
                   actors: item.actors.map(actorOf),
                 });
-                const unread = item.read_at === null;
+                const unread = isUnreadFeedItem(item);
                 const clickable = destinationForFeedItem(item, viewer) !== null;
-                const row = (
-                  <>
+
+                function activateRow(event: React.MouseEvent<HTMLLIElement>) {
+                  // Hover-action buttons live inside the row; don't navigate when they're clicked.
+                  if ((event.target as HTMLElement).closest("button")) return;
+                  if (clickable) openItem(item);
+                }
+
+                return (
+                  <li
+                    key={item.id}
+                    tabIndex={clickable ? 0 : undefined}
+                    onClick={activateRow}
+                    onKeyDown={(event) => {
+                      if (!clickable) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openItem(item);
+                      }
+                    }}
+                    className={cn(
+                      "group flex gap-3 px-4 py-3",
+                      clickable &&
+                        "cursor-pointer hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary",
+                      unread && "bg-blue-50 dark:bg-blue-950/40"
+                    )}
+                  >
                     <div className="shrink-0 pt-0.5">
                       {display.actorName ? (
                         <UserAvatar
@@ -168,12 +206,36 @@ export function NotificationDrawer({
                           )}
                           <span className="text-muted-foreground">{display.action}</span>
                         </p>
-                        {unread && (
-                          <span
-                            className="mt-1.5 size-2 shrink-0 rounded-full bg-blue-500"
-                            aria-label="Unread"
-                          />
-                        )}
+                        <div className="flex shrink-0 items-center gap-1">
+                          <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            {unread && (
+                              <button
+                                type="button"
+                                onClick={() => void feedClient.markAsRead(item)}
+                                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                aria-label="Mark as read"
+                                title="Mark as read"
+                              >
+                                <Check className="size-3.5" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void feedClient.markAsArchived(item)}
+                              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label="Delete notification"
+                              title="Delete"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          {unread && (
+                            <span
+                              className="mt-1.5 size-2 rounded-full bg-blue-500 group-hover:hidden"
+                              aria-label="Unread"
+                            />
+                          )}
+                        </div>
                       </div>
                       {display.contextLine && (
                         <p className="mt-0.5 truncate text-sm text-muted-foreground">
@@ -186,24 +248,6 @@ export function NotificationDrawer({
                         {relativeTime(item.inserted_at)}
                       </p>
                     </div>
-                  </>
-                );
-                return (
-                  <li
-                    key={item.id}
-                    className={cn(unread && "bg-blue-50 dark:bg-blue-950/40")}
-                  >
-                    {clickable ? (
-                      <button
-                        type="button"
-                        onClick={() => openItem(item)}
-                        className="flex w-full gap-3 px-4 py-3 text-left hover:bg-muted/50"
-                      >
-                        {row}
-                      </button>
-                    ) : (
-                      <div className="flex gap-3 px-4 py-3">{row}</div>
-                    )}
                   </li>
                 );
               })}

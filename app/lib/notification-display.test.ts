@@ -4,6 +4,7 @@ import {
   describeFeedItem,
   destinationForFeedItem,
   formatBadgeCount,
+  isUnreadFeedItem,
   relativeTime,
   type NotificationViewer,
 } from "./notification-display";
@@ -41,6 +42,27 @@ describe("formatBadgeCount", () => {
   it("caps the badge at 99+ so a large backlog stays legible", () => {
     expect(formatBadgeCount(100)).toBe("99+");
     expect(formatBadgeCount(4200)).toBe("99+");
+  });
+});
+
+describe("isUnreadFeedItem", () => {
+  it("treats an item with no read_at as unread", () => {
+    expect(isUnreadFeedItem({ read_at: null })).toBe(true);
+  });
+
+  it("treats an item that has been read as read", () => {
+    expect(
+      isUnreadFeedItem({ read_at: "2026-11-18T12:00:00Z" })
+    ).toBe(false);
+  });
+
+  it("counts a seen-but-not-read item as still unread", () => {
+    expect(
+      isUnreadFeedItem({
+        seen_at: "2026-11-18T12:00:00Z",
+        read_at: null,
+      })
+    ).toBe(true);
   });
 });
 
