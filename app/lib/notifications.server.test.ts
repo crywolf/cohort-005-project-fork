@@ -1,6 +1,12 @@
+import { afterEach } from "vitest";
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { knockUserId, signKnockUserToken } from "./notifications.server";
+import {
+  defaultKnockClient,
+  knockUserId,
+  recordingKnockClient,
+  signKnockUserToken,
+} from "./notifications.server";
 
 describe("knockUserId", () => {
   it("derives the canonical Knock user id from the app user's database id", () => {
@@ -68,5 +74,50 @@ describe("signKnockUserToken", () => {
     } finally {
       if (previous !== undefined) process.env.KNOCK_SIGNING_KEY = previous;
     }
+  });
+});
+
+describe("defaultKnockClient", () => {
+  const previousApiKey = process.env.KNOCK_API_KEY;
+
+  afterEach(() => {
+    if (previousApiKey === undefined) delete process.env.KNOCK_API_KEY;
+    else process.env.KNOCK_API_KEY = previousApiKey;
+  });
+
+  it("is a no-op without KNOCK_API_KEY", async () => {
+    delete process.env.KNOCK_API_KEY;
+
+    const client = defaultKnockClient();
+
+    await expect(
+      client.trigger("discussion-reply-posted", {
+        recipients: [{ id: "user-1" }],
+        data: {},
+      })
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("recordingKnockClient", () => {
+  it("records the workflow key, recipients and data of each trigger", async () => {
+    const { client, calls } = recordingKnockClient();
+
+    await client.trigger("discussion-reply-posted", {
+      recipients: [{ id: "user-1", name: "Ada" }],
+      data: { lessonId: 3 },
+    });
+
+    expect(calls).toEqual([
+      {
+        workflowKey: "discussion-reply-posted",
+        recipients: [{ id: "user-1", name: "Ada" }],
+        data: { lessonId: 3 },
+      },
+    ]);
+  });
+
+  it("starts with no recorded calls", () => {
+    expect(recordingKnockClient().calls).toEqual([]);
   });
 });
