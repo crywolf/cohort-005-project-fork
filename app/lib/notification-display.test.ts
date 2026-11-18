@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBadgeCount, relativeTime } from "./notification-display";
+import { describeFeedItem, formatBadgeCount, relativeTime } from "./notification-display";
 
 describe("formatBadgeCount", () => {
   it("hides the badge when there are no unread notifications", () => {
@@ -35,5 +35,70 @@ describe("relativeTime", () => {
 
   it("falls back to a calendar date for older events", () => {
     expect(relativeTime("2026-09-02T12:00:00Z", now)).toBe("Sep 2");
+  });
+});
+
+describe("describeFeedItem", () => {
+  it("describes a discussion reply: actor, action, context, label", () => {
+    const display = describeFeedItem({
+      source: { key: "discussion-reply-posted" },
+      data: {
+        replierName: "Ada Lovelace",
+        courseTitle: "Testing with Vitest",
+        lessonTitle: "Writing your first test",
+        replyBody: "  Try narrowing the type first.  ",
+      },
+    });
+
+    expect(display.actorName).toBe("Ada Lovelace");
+    expect(display.action).toBe("replied to your question on Writing your first test");
+    expect(display.contextLine).toBe("Try narrowing the type first.");
+    expect(display.eventLabel).toBe("Discussion reply");
+  });
+
+  it("describes a new discussion question on your course", () => {
+    const display = describeFeedItem({
+      source: { key: "new-discussion-question" },
+      data: {
+        authorName: "Grace Hopper",
+        courseTitle: "Testing with Vitest",
+        lessonTitle: "Mocking boundaries",
+        questionBody: "How do I fake timers?",
+      },
+    });
+
+    expect(display.actorName).toBe("Grace Hopper");
+    expect(display.action).toBe("asked a question on Mocking boundaries");
+    expect(display.contextLine).toBe("How do I fake timers?");
+    expect(display.eventLabel).toBe("New question");
+  });
+
+  it("falls back to the feed item's actor when the payload has no actor name", () => {
+    const display = describeFeedItem({
+      source: { key: "discussion-reply-posted" },
+      actors: [{ name: "Ada Lovelace" }],
+      data: { lessonTitle: "Writing your first test", replyBody: "Try narrowing the type first." },
+    });
+
+    expect(display.actorName).toBe("Ada Lovelace");
+  });
+
+  it("treats events with no actor as actorless and labels them from the workflow", () => {
+    const display = describeFeedItem({
+      source: { key: "purchase-finalized" },
+      data: { courseTitle: "Testing with Vitest", body: "Your purchase went through." },
+    });
+
+    expect(display.actorName).toBeNull();
+    expect(display.eventLabel).toBe("Purchase finalized");
+    expect(display.contextLine).toBe("Your purchase went through.");
+  });
+
+  it("never crashes on an item with no data", () => {
+    const display = describeFeedItem({ source: { key: "seat-claimed" } });
+
+    expect(display.actorName).toBeNull();
+    expect(display.eventLabel).toBe("Seat claimed");
+    expect(display.contextLine).toBe("");
   });
 });
