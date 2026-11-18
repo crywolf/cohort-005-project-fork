@@ -127,6 +127,236 @@ export function defaultKnockClient(): KnockClient {
   return apiKey ? knockApiTransport(apiKey) : noopKnockClient();
 }
 
+// ─── Preference sets ───
+// Notification Preferences are stored only in Knock preference sets — there
+// is no local table. A separate injected client seam keeps the trigger seam
+// untouched: the settings route reads and writes the "default" preference
+// set of the signed-in person's Knock subscriber, category by category.
+// Off means never sent: Knock evaluates the preference set when it runs a
+// workflow, so a category that is off blocks every workflow in it.
+
+// The preference set whose id the dashboard provisions by default.
+export const DEFAULT_PREFERENCE_SET_ID = "default";
+
+// The in-app feed channel type in Knock's preference set schema.
+const IN_APP_FEED_CHANNEL_TYPE = "in_app_feed";
+
+export type KnockPreferenceSet = {
+  id?: string;
+  categories?:
+    | Record<
+        string,
+        boolean | { channel_types?: Record<string, boolean | object> }
+      >
+    | null;
+  channel_types?: Record<string, boolean | object> | null;
+};
+
+export interface KnockPreferencesClient {
+  getPreferenceSet(knockUserId: string): Promise<KnockPreferenceSet | null>;
+  updatePreferenceSet(
+    knockUserId: string,
+    categories: Record<string, unknown>
+  ): Promise<KnockPreferenceSet>;
+}
+
+export function knockPreferencesApiTransport(
+  apiKey: string
+): KnockPreferencesClient {
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+  };
+
+  return {
+    async getPreferenceSet(knockUserId) {
+      const response = await fetch(
+        `https://api.knock.app/v1/users/${knockUserId}/preferences/${DEFAULT_PREFERENCE_SET_ID}`,
+        { headers }
+      );
+
+      // A person who has never touched their preferences has nothing stored
+      // yet — the defaults apply.
+      if (response.status === 404) return null;
+
+      if (!response.ok) {
+        throw new Error(
+          `Knock rejected the preference set read for ${knockUserId}: ${response.status}`
+        );
+      }
+
+      return (await response.json()) as KnockPreferenceSet;
+    },
+
+    async updatePreferenceSet(knockUserId, categories) {
+      const response = await fetch(
+        `https://api.knock.app/v1/users/${knockUserId}/preferences/${DEFAULT_PREFERENCE_SET_ID}`,
+        {
+          method: "PUT",
+          headers,
+          // Merge, not replace: a toggle must not wipe preferences Knock
+          // holds that this screen knows nothing about.
+          body: JSON.stringify({
+            __persistence_strategy__: "merge",
+            categories,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Knock rejected the preference set update for ${knockUserId}: ${response.status}`
+        );
+      }
+
+      return (await response.json()) as KnockPreferenceSet;
+    },
+  };
+}
+
+export function noopKnockPreferencesClient(): KnockPreferencesClient {
+  return {
+    async getPreferenceSet() {
+      return null;
+    },
+    async updatePreferenceSet() {
+      return {};
+    },
+  };
+}
+
+export function defaultKnockPreferencesClient(): KnockPreferencesClient {
+  const apiKey = process.env.KNOCK_API_KEY;
+  return apiKey
+    ? knockPreferencesApiTransport(apiKey)
+    : noopKnockPreferencesClient();
+}
+
+// The fake behind the interface for tests: returns a canned preference set
+// from reads and records every update.
+export type RecordedPreferenceSetUpdate = {
+  userId: string;
+  categories: Record<string, unknown>;
+};
+
+// The three Notification Categories, mapped 1:1 to Knock workflow
+// categories. `refund-request-filed` is deliberately in none of them — the
+// Platform Admin queue alert is always on and not a preference.
+export const DISCUSSION_ACTIVITY_CATEGORY = "discussion-activity";
+export const PURCHASES_REFUNDS_CATEGORY = "purchases-refunds";
+export const NEW_STUDENTS_CATEGORY = "new-students";
+
+export const NOTIFICATION_CATEGORIES = [
+  DISCUSSION_ACTIVITY_CATEGORY,
+  PURCHASES_REFUNDS_CATEGORY,
+  NEW_STUDENTS_CATEGORY,
+] as const;
+
+export type NotificationCategoryKey = (typeof NOTIFICATION_CATEGORIES)[number];
+
+const DEFAULT_IN_APP_PREFERENCES: Record<NotificationCategoryKey, boolean> = {
+  [DISCUSSION_ACTIVITY_CATEGORY]: true,
+  [PURCHASES_REFUNDS_CATEGORY]: true,
+  [NEW_STUDENTS_CATEGORY]: true,
+};
+
+function inAppFeedEnabledFor(
+  preferenceSet: KnockPreferenceSet | null,
+  categoryKey: NotificationCategoryKey
+): boolean {
+  const entry = preferenceSet?.categories?.[categoryKey];
+
+  // Anything not stored is at its default: on.
+  if (entry === undefined || entry === null) return true;
+  if (typeof entry === "boolean") return entry;
+
+  return entry.channel_types?.[IN_APP_FEED_CHANNEL_TYPE] !== false;
+}
+
+// The in-app on/off state of every Notification Category for a person, read
+// live from Knock so a role acquired later is immediately eligible at its
+// defaults. A Knock outage falls back to the defaults — the settings page
+// must stay loadable.
+export async function readInAppNotificationPreferences(
+  userId: number,
+  knock: KnockPreferencesClient = defaultKnockPreferencesClient()
+): Promise<Record<NotificationCategoryKey, boolean>> {
+  try {
+    const preferenceSet = await knock.getPreferenceSet(knockUserId(userId));
+    return Object.fromEntries(
+      NOTIFICATION_CATEGORIES.map((categoryKey) => [
+        categoryKey,
+        inAppFeedEnabledFor(preferenceSet, categoryKey),
+      ])
+    ) as Record<NotificationCategoryKey, boolean>;
+  } catch (error) {
+    console.error(
+      `Knock preference set read for ${knockUserId(userId)} failed:`,
+      error
+    );
+    return { ...DEFAULT_IN_APP_PREFERENCES };
+  }
+}
+
+// Persist one toggle: the category's in-app feed channel type in the
+// person's Knock preference set. Returns false (instead of throwing) when
+// Knock is unreachable so the settings action can show an error without
+// crashing the page.
+export async function writeInAppNotificationPreference(
+  userId: number,
+  categoryKey: NotificationCategoryKey,
+  enabled: boolean,
+  knock: KnockPreferencesClient = defaultKnockPreferencesClient()
+): Promise<boolean> {
+  try {
+    await knock.updatePreferenceSet(knockUserId(userId), {
+      [categoryKey]: { channel_types: { [IN_APP_FEED_CHANNEL_TYPE]: enabled } },
+    });
+    return true;
+  } catch (error) {
+    console.error(
+      `Knock preference set update for ${knockUserId(userId)} failed:`,
+      error
+    );
+    return false;
+  }
+}
+
+export function recordingKnockPreferencesClient(
+  options: {
+    preferenceSet?: KnockPreferenceSet | null;
+    failReads?: boolean;
+    failUpdates?: boolean;
+  } = {}
+): {
+  client: KnockPreferencesClient;
+  reads: string[];
+  updates: RecordedPreferenceSetUpdate[];
+} {
+  const reads: string[] = [];
+  const updates: RecordedPreferenceSetUpdate[] = [];
+  return {
+    reads,
+    updates,
+    client: {
+      async getPreferenceSet(knockUserId) {
+        reads.push(knockUserId);
+        if (options.failReads) {
+          throw new Error("Knock is down");
+        }
+        return options.preferenceSet ?? null;
+      },
+      async updatePreferenceSet(knockUserId, categories) {
+        if (options.failUpdates) {
+          throw new Error("Knock is down");
+        }
+        updates.push({ userId: knockUserId, categories });
+        return {};
+      },
+    },
+  };
+}
+
 // ─── Triggers ───
 // One function per catalogue event. Each takes the database first and the
 // id of the domain row that produced the event, resolves the recipient's
