@@ -1,4 +1,8 @@
 import { UserRole } from "~/db/schema";
+import {
+  isWorkflowKey,
+  type WorkflowKey,
+} from "~/lib/notification-workflows";
 
 const BADGE_CAP = 99;
 
@@ -64,12 +68,11 @@ interface WorkflowDisplay {
 }
 
 /**
- * Per-workflow row copy. The workflow keys are the ones the notifications
- * module sends (see app/lib/notifications.server.ts). New triggers added by
- * later tickets add an entry here; unknown keys fall back to the workflow
- * key prettified as the event label.
+ * Per-workflow row copy, keyed by the shared WorkflowKey union so a typo in
+ * a key cannot compile. Entries are optional by design: a workflow with no
+ * entry here falls back to its key prettified as the event label.
  */
-const WORKFLOW_DISPLAY: Record<string, WorkflowDisplay> = {
+const WORKFLOW_DISPLAY: Partial<Record<WorkflowKey, WorkflowDisplay>> = {
   "discussion-reply-posted": {
     actorDataKey: "replierName",
     action: (data) => `replied to your question on ${data.lessonTitle ?? ""}`.trim(),
@@ -114,7 +117,10 @@ function asActor(value: unknown): FeedItemActor | null {
 export function describeFeedItem(item: FeedItemLike): FeedItemDisplay {
   const data = item.data ?? {};
   const workflowKey = item.source?.key ?? null;
-  const workflow = workflowKey ? WORKFLOW_DISPLAY[workflowKey] : undefined;
+  const workflow =
+    workflowKey && isWorkflowKey(workflowKey)
+      ? WORKFLOW_DISPLAY[workflowKey]
+      : undefined;
 
   const actor = asActor(item.actors?.[0] ?? null);
   const actorName =
@@ -183,12 +189,19 @@ interface WorkflowDestination {
   requiredRole: RequiredNotificationRole;
 }
 
+/** Both purchase events deep-link to the course page of the bought course. */
+const coursePagePath: WorkflowDestination["path"] = (data) => {
+  const courseSlug = stringData(data, "courseSlug");
+  return courseSlug ? `/courses/${courseSlug}` : null;
+};
+
 /**
- * Per-workflow destinations. The workflow keys are the ones the
- * notifications module sends (see app/lib/notifications.server.ts); the
- * payload keys each path builder uses are the hints that module includes.
+ * Per-workflow destinations, keyed by the shared WorkflowKey union so every
+ * workflow the senders can fire must have a destination here. The payload
+ * keys each path builder uses are the hints the notifications module
+ * includes (see app/lib/notifications.server.ts).
  */
-const WORKFLOW_DESTINATIONS: Record<string, WorkflowDestination> = {
+const WORKFLOW_DESTINATIONS: Record<WorkflowKey, WorkflowDestination> = {
   "discussion-reply-posted": {
     // Anchoring to the exact thread is left to the lesson page.
     path: (data) =>
@@ -199,17 +212,11 @@ const WORKFLOW_DESTINATIONS: Record<string, WorkflowDestination> = {
   },
   "purchase-finalized": {
     // The course page for both kinds — the teamUrl hint is not the deep link.
-    path: (data) => {
-      const courseSlug = stringData(data, "courseSlug");
-      return courseSlug ? `/courses/${courseSlug}` : null;
-    },
+    path: coursePagePath,
     requiredRole: null,
   },
   "refund-request-decided": {
-    path: (data) => {
-      const courseSlug = stringData(data, "courseSlug");
-      return courseSlug ? `/courses/${courseSlug}` : null;
-    },
+    path: coursePagePath,
     requiredRole: null,
   },
   "new-discussion-question": {
@@ -282,7 +289,10 @@ export function destinationForFeedItem(
   viewer: NotificationViewer
 ): NotificationDestination | null {
   const workflowKey = item.source?.key ?? null;
-  const workflow = workflowKey ? WORKFLOW_DESTINATIONS[workflowKey] : undefined;
+  const workflow =
+    workflowKey && isWorkflowKey(workflowKey)
+      ? WORKFLOW_DESTINATIONS[workflowKey]
+      : undefined;
   if (!workflow) return null;
 
   const data = item.data ?? {};
