@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useNotificationStore } from "@knocklabs/react";
-import type { Feed, FeedItem, Recipient } from "@knocklabs/client";
+import type { Feed, FeedItem } from "@knocklabs/client";
 import {
   Bell,
   Check,
@@ -18,21 +18,18 @@ import {
   destinationForFeedItem,
   isUnreadFeedItem,
   relativeTime,
-  type FeedItemActor,
   type NotificationViewer,
 } from "~/lib/notification-display";
+import { isWorkflowKey, type WorkflowKey } from "~/lib/notification-workflows";
 import { UserAvatar } from "~/components/user-avatar";
 import { cn } from "~/lib/utils";
 
 const PAGE_SIZE = 12;
 
-/** Narrow Knock's `Recipient` (a User or an object reference) to the fields a row renders. */
-function actorOf(recipient: Recipient | null | undefined): FeedItemActor | null {
-  if (!recipient || !("name" in recipient)) return null;
-  return { name: recipient.name, avatar: recipient.avatar };
-}
-
-const eventTypeIcons: Record<string, React.ReactNode> = {
+// Keyed by the shared WorkflowKey union: a new workflow cannot compile
+// without an icon here. The bell is the fallback for actorless rows whose
+// key somehow misses — see the render below.
+const eventTypeIcons: Record<WorkflowKey, React.ReactNode> = {
   "discussion-reply-posted": <MessageSquare className="size-4" />,
   "new-discussion-question": <MessageSquare className="size-4" />,
   "purchase-finalized": <ShoppingBag className="size-4" />,
@@ -152,12 +149,18 @@ export function NotificationDrawer({
           ) : (
             <ul className="divide-y divide-border">
               {items.map((item) => {
-                const display = describeFeedItem({
-                  ...item,
-                  actors: item.actors.map(actorOf),
-                });
+                // One actor shape: the raw Knock recipients go straight to
+                // describeFeedItem, whose asActor is the single narrowing.
+                const display = describeFeedItem(item);
                 const unread = isUnreadFeedItem(item);
                 const clickable = destinationForFeedItem(item, viewer) !== null;
+                const sourceKey = item.source?.key;
+                const fallbackIcon =
+                  sourceKey && isWorkflowKey(sourceKey)
+                    ? eventTypeIcons[sourceKey]
+                    : (
+                      <Bell className="size-4" />
+                    );
 
                 function activateRow(event: React.MouseEvent<HTMLLIElement>) {
                   // Hover-action buttons live inside the row; don't navigate when they're clicked.
@@ -192,9 +195,7 @@ export function NotificationDrawer({
                         />
                       ) : (
                         <div className="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                          {eventTypeIcons[item.source?.key ?? ""] ?? (
-                            <Bell className="size-4" />
-                          )}
+                          {fallbackIcon}
                         </div>
                       )}
                     </div>
@@ -219,6 +220,12 @@ export function NotificationDrawer({
                                 <Check className="size-3.5" />
                               </button>
                             )}
+                            {/* Documented deviation from the spec: the spec
+                                asked for outright delete, but Knock's feed
+                                client has no delete — archive is the closest
+                                primitive. The row leaves the feed but the
+                                message stays in Knock as archived; revisit
+                                if Knock ships a real delete. */}
                             <button
                               type="button"
                               onClick={() => void feedClient.markAsArchived(item)}

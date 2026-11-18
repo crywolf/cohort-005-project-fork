@@ -10,6 +10,30 @@ import { createHmac } from "node:crypto";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { and, eq } from "drizzle-orm";
 import * as schema from "~/db/schema";
+import {
+  DISCUSSION_REPLY_WORKFLOW,
+  NEW_DISCUSSION_QUESTION_WORKFLOW,
+  NEW_ENROLLMENT_WORKFLOW,
+  PURCHASE_FINALIZED_WORKFLOW,
+  REFUND_REQUEST_DECIDED_WORKFLOW,
+  REFUND_REQUEST_FILED_WORKFLOW,
+  SEAT_CLAIMED_WORKFLOW,
+} from "~/lib/notification-workflows";
+
+// The workflow keys live in notification-workflows.ts, shared with the
+// display inventories; re-exported here so the senders stay the one seam.
+export {
+  DISCUSSION_REPLY_WORKFLOW,
+  NEW_DISCUSSION_QUESTION_WORKFLOW,
+  NEW_ENROLLMENT_WORKFLOW,
+  PURCHASE_FINALIZED_WORKFLOW,
+  REFUND_REQUEST_DECIDED_WORKFLOW,
+  REFUND_REQUEST_FILED_WORKFLOW,
+  SEAT_CLAIMED_WORKFLOW,
+  WORKFLOW_KEYS,
+  isWorkflowKey,
+  type WorkflowKey,
+} from "~/lib/notification-workflows";
 
 export function knockUserId(userId: number): string {
   return `user-${userId}`;
@@ -73,6 +97,15 @@ export type KnockRecipient = {
   avatar?: string | null;
 };
 
+// The header block every Knock REST call needs: the API key as the Basic
+// username with an empty password, JSON bodies.
+function knockApiHeaders(apiKey: string) {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+  };
+}
+
 export function knockApiTransport(apiKey: string): KnockClient {
   return {
     async trigger(workflowKey, input) {
@@ -80,10 +113,7 @@ export function knockApiTransport(apiKey: string): KnockClient {
         `https://api.knock.app/v1/workflows/${workflowKey}/trigger`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
-          },
+          headers: knockApiHeaders(apiKey),
           body: JSON.stringify(input),
         }
       );
@@ -163,10 +193,7 @@ export interface KnockPreferencesClient {
 export function knockPreferencesApiTransport(
   apiKey: string
 ): KnockPreferencesClient {
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
-  };
+  const headers = knockApiHeaders(apiKey);
 
   return {
     async getPreferenceSet(knockUserId) {
@@ -254,6 +281,26 @@ export const NOTIFICATION_CATEGORIES = [
 
 export type NotificationCategoryKey = (typeof NOTIFICATION_CATEGORIES)[number];
 
+// The Categories the settings card shows a person, at their roles: the
+// app-level role plus whether they administer a Team. A Team Admin receives
+// seat-claimed and licence-purchase notifications even when their app-level
+// role is Student or Instructor, so they get the Purchases & refunds toggle
+// too. Platform Admins get no toggles — the refund-queue alert is always on
+// and not a preference.
+export function relevantNotificationCategories(
+  role: schema.UserRole,
+  isTeamAdmin: boolean
+): NotificationCategoryKey[] {
+  if (role === schema.UserRole.Admin) return [];
+
+  const categories: NotificationCategoryKey[] = [DISCUSSION_ACTIVITY_CATEGORY];
+  if (role === schema.UserRole.Instructor) categories.push(NEW_STUDENTS_CATEGORY);
+  if (role === schema.UserRole.Student || isTeamAdmin) {
+    categories.push(PURCHASES_REFUNDS_CATEGORY);
+  }
+  return categories;
+}
+
 const DEFAULT_IN_APP_PREFERENCES: Record<NotificationCategoryKey, boolean> = {
   [DISCUSSION_ACTIVITY_CATEGORY]: true,
   [PURCHASES_REFUNDS_CATEGORY]: true,
@@ -310,7 +357,12 @@ export async function writeInAppNotificationPreference(
 ): Promise<boolean> {
   try {
     await knock.updatePreferenceSet(knockUserId(userId), {
-      [categoryKey]: { channel_types: { [IN_APP_FEED_CHANNEL_TYPE]: enabled } },
+      // Hard-coded to the in-app feed for now. The email slice must extend
+      // this channel map (add `email: …` alongside `in_app_feed`), not
+      // re-write the shape — re-writing would drop the in-app toggle.
+      [categoryKey]: {
+        channel_types: { [IN_APP_FEED_CHANNEL_TYPE]: enabled },
+      },
     });
     return true;
   } catch (error) {
@@ -470,7 +522,7 @@ function getTeamAdmin(db: Db, teamId: number) {
 // Purchase that granted Seats, and every Team Licence grants at least one.
 type PurchaseKind = "individual_purchase" | "team_licence";
 
-function kindOf(seats: { id: number }[]): PurchaseKind {
+function purchaseKindOfSeats(seats: { id: number }[]): PurchaseKind {
   return seats.length > 0 ? "team_licence" : "individual_purchase";
 }
 
@@ -497,7 +549,6 @@ async function deliver(
   }
 }
 
-export const DISCUSSION_REPLY_WORKFLOW = "discussion-reply-posted";
 
 export async function notifyDiscussionReplyPosted(
   db: Db,
@@ -532,7 +583,6 @@ export async function notifyDiscussionReplyPosted(
   });
 }
 
-export const PURCHASE_FINALIZED_WORKFLOW = "purchase-finalized";
 
 export async function notifyPurchaseFinalized(
   db: Db,
@@ -547,7 +597,7 @@ export async function notifyPurchaseFinalized(
   if (!course || !buyer) return;
 
   const seats = getSeats(db, purchase.id);
-  const kind = kindOf(seats);
+  const kind = purchaseKindOfSeats(seats);
 
   // The sole didn't-initiate exception: the buyer's own click is what
   // finalizes the Purchase, and the confirmation is still worth sending.
@@ -563,7 +613,6 @@ export async function notifyPurchaseFinalized(
   });
 }
 
-export const SEAT_CLAIMED_WORKFLOW = "seat-claimed";
 
 export async function notifySeatClaimed(
   db: Db,
@@ -595,7 +644,6 @@ export async function notifySeatClaimed(
   });
 }
 
-export const REFUND_REQUEST_FILED_WORKFLOW = "refund-request-filed";
 
 export async function notifyRefundRequestFiled(
   db: Db,
@@ -632,7 +680,6 @@ export async function notifyRefundRequestFiled(
   });
 }
 
-export const NEW_ENROLLMENT_WORKFLOW = "new-enrollment";
 
 export async function notifyNewEnrollment(
   db: Db,
@@ -665,7 +712,6 @@ export async function notifyNewEnrollment(
   });
 }
 
-export const REFUND_REQUEST_DECIDED_WORKFLOW = "refund-request-decided";
 
 export async function notifyRefundRequestDecided(
   db: Db,
@@ -695,7 +741,6 @@ export async function notifyRefundRequestDecided(
   });
 }
 
-export const NEW_DISCUSSION_QUESTION_WORKFLOW = "new-discussion-question";
 
 export async function notifyNewDiscussionQuestionPosted(
   db: Db,

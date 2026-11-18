@@ -19,6 +19,7 @@ import {
   notifySeatClaimed,
   readInAppNotificationPreferences,
   recordingKnockClient,
+  relevantNotificationCategories,
   writeInAppNotificationPreference,
   recordingKnockPreferencesClient,
   signKnockUserToken,
@@ -419,7 +420,9 @@ describe("notifySeatClaimed", () => {
     const { client, calls } = recordingKnockClient();
     const licence = seedTeamLicence(base.user.id, base.course.id, 3);
     const member = seedMember("Team Member", "member@example.com");
-    const coupon = claimSeat(licence.coupons[0]!.id, member.id);
+    const seat = licence.coupons[0];
+    if (!seat) throw new Error("licence has no seats");
+    const coupon = claimSeat(seat.id, member.id);
 
     await notifySeatClaimed(db, { couponId: coupon.id }, client);
 
@@ -447,7 +450,7 @@ describe("notifySeatClaimed", () => {
   it("never notifies the Team Admin about their own seat claim", async () => {
     const { client, calls } = recordingKnockClient();
     const licence = seedTeamLicence(base.user.id, base.course.id, 3);
-    const coupon = claimSeat(licence.coupons[0]!.id, base.user.id);
+    const coupon = claimSeat(licence.coupons[0]?.id ?? -1, base.user.id);
 
     await notifySeatClaimed(db, { couponId: coupon.id }, client);
 
@@ -457,7 +460,9 @@ describe("notifySeatClaimed", () => {
   it("a Knock outage never fails the seat claim", async () => {
     const licence = seedTeamLicence(base.user.id, base.course.id, 3);
     const member = seedMember("Team Member", "member@example.com");
-    const coupon = claimSeat(licence.coupons[0]!.id, member.id);
+    const seat = licence.coupons[0];
+    if (!seat) throw new Error("licence has no seats");
+    const coupon = claimSeat(seat.id, member.id);
 
     await expect(
       notifySeatClaimed(db, { couponId: coupon.id }, failingKnockClient())
@@ -867,6 +872,42 @@ describe("writeInAppNotificationPreference", () => {
     ).resolves.toBe(false);
 
     consoleError.mockRestore();
+  });
+});
+
+describe("relevantNotificationCategories", () => {
+  it("gives a Student Discussion activity and Purchases & refunds", () => {
+    expect(relevantNotificationCategories(schema.UserRole.Student, false)).toEqual([
+      DISCUSSION_ACTIVITY_CATEGORY,
+      PURCHASES_REFUNDS_CATEGORY,
+    ]);
+  });
+
+  it("gives an Instructor Discussion activity and New students", () => {
+    expect(relevantNotificationCategories(schema.UserRole.Instructor, false)).toEqual([
+      DISCUSSION_ACTIVITY_CATEGORY,
+      NEW_STUDENTS_CATEGORY,
+    ]);
+  });
+
+  it("shows Purchases & refunds to a Team Admin whose app role is Instructor", () => {
+    expect(relevantNotificationCategories(schema.UserRole.Instructor, true)).toEqual([
+      DISCUSSION_ACTIVITY_CATEGORY,
+      NEW_STUDENTS_CATEGORY,
+      PURCHASES_REFUNDS_CATEGORY,
+    ]);
+  });
+
+  it("shows Purchases & refunds to a Team Admin whose app role is Student", () => {
+    expect(relevantNotificationCategories(schema.UserRole.Student, true)).toEqual([
+      DISCUSSION_ACTIVITY_CATEGORY,
+      PURCHASES_REFUNDS_CATEGORY,
+    ]);
+  });
+
+  it("gives a Platform Admin no toggles — the refund-queue alert is always on", () => {
+    expect(relevantNotificationCategories(schema.UserRole.Admin, false)).toEqual([]);
+    expect(relevantNotificationCategories(schema.UserRole.Admin, true)).toEqual([]);
   });
 });
 

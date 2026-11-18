@@ -38,6 +38,10 @@ import { formatDuration, formatPrice } from "~/lib/utils";
 import { resolveCountry } from "~/lib/country.server";
 import { calculatePppPrice, getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { parseFormData, parseParams } from "~/lib/validation";
+import {
+  notifyNewEnrollment,
+  notifyPurchaseFinalized,
+} from "~/lib/notifications.server";
 
 function getCourseBySlug(slug: string) {
   return db.select().from(courses).where(eq(courses.slug, slug)).get();
@@ -367,15 +371,26 @@ export async function action({ params, request }: Route.ActionArgs) {
     if (isUserEnrolled(currentUserId, course.id)) {
       throw redirect(`/courses/${slug}`);
     }
-    createPurchase(currentUserId, course.id, pppPrice, country);
-    enrollUser(currentUserId, course.id, false, false);
+    const purchase = createPurchase(currentUserId, course.id, pppPrice, country);
+    const enrollment = enrollUser(currentUserId, course.id, false, false);
+    // The mutations have committed; a Knock failure inside these is logged
+    // and swallowed, never surfaced to the buyer.
+    await notifyPurchaseFinalized(db, { purchaseId: purchase.id });
+    await notifyNewEnrollment(db, { enrollmentId: enrollment.id });
     throw redirect(`/courses/${slug}/welcome`);
   }
 
   // Team purchase — user does NOT get enrolled themselves
   const { quantity } = parsed.data;
   const totalPrice = pppPrice * quantity;
-  createTeamPurchase(currentUserId, course.id, totalPrice, country, quantity);
+  const { purchase } = createTeamPurchase(
+    currentUserId,
+    course.id,
+    totalPrice,
+    country,
+    quantity
+  );
+  await notifyPurchaseFinalized(db, { purchaseId: purchase.id });
   throw redirect(`/team`);
 }
 

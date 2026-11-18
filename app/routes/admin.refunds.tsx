@@ -22,6 +22,7 @@ import {
 } from "~/lib/refunds.server";
 import { RULE_BREAK_LABELS } from "~/lib/refund-rules";
 import { sendEmail } from "~/lib/mailer.server";
+import { notifyRefundRequestDecided } from "~/lib/notifications.server";
 
 const refundFilterSchema = z
   .nativeEnum(RefundStatus)
@@ -126,6 +127,10 @@ export async function action({ request }: Route.ActionArgs) {
   if (!result.ok) {
     return data({ error: result.error }, { status: result.status });
   }
+
+  // The decision has committed; a Knock failure inside this is logged and
+  // swallowed, never surfaced to the admin.
+  await notifyRefundRequestDecided(db, { refundId: refundRequestId });
 
   await sendEmail(result.email);
 
