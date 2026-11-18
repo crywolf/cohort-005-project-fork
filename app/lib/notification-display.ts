@@ -1,3 +1,5 @@
+import { UserRole } from "~/db/schema";
+
 const BADGE_CAP = 99;
 
 const MINUTE = 60_000;
@@ -122,6 +124,150 @@ export function describeFeedItem(item: FeedItemLike): FeedItemDisplay {
       trimmedString(data.body),
     eventLabel,
   };
+}
+
+/**
+ * The signed-in clicker, as far as the deep-link mapping may know them: the
+ * app-level role plus whether they administer a Team. Kept structural so the
+ * drawer passes its `currentUser` straight through.
+ */
+export interface NotificationViewer {
+  role: UserRole;
+  isTeamAdmin: boolean;
+}
+
+/**
+ * The app-level role a destination demands. `null` means every signed-in
+ * user qualifies; "instructor" means the Instructor-or-Admin staff overlap;
+ * "admin" is the Platform Admin role; "team-admin" is a Team's Admin member.
+ */
+export type RequiredNotificationRole = "instructor" | "admin" | "team-admin" | null;
+
+export interface NotificationDestination {
+  /** Where the click navigates. */
+  path: string;
+  requiredRole: RequiredNotificationRole;
+  /** Where a clicker without the required role lands instead. */
+  fallbackPath: string;
+}
+
+interface WorkflowDestination {
+  path: (data: Record<string, string | number | boolean | null>) => string | null;
+  requiredRole: RequiredNotificationRole;
+}
+
+/**
+ * Per-workflow destinations. The workflow keys are the ones the
+ * notifications module sends (see app/lib/notifications.server.ts); the
+ * payload keys each path builder uses are the hints that module includes.
+ */
+const WORKFLOW_DESTINATIONS: Record<string, WorkflowDestination> = {
+  "discussion-reply-posted": {
+    // Anchoring to the exact thread is left to the lesson page.
+    path: (data) =>
+      stringData(data, "courseSlug") && intData(data, "lessonId") !== null
+        ? `/courses/${data.courseSlug}/lessons/${data.lessonId}`
+        : null,
+    requiredRole: null,
+  },
+  "purchase-finalized": {
+    // The course page for both kinds — the teamUrl hint is not the deep link.
+    path: (data) => {
+      const courseSlug = stringData(data, "courseSlug");
+      return courseSlug ? `/courses/${courseSlug}` : null;
+    },
+    requiredRole: null,
+  },
+  "refund-request-decided": {
+    path: (data) => {
+      const courseSlug = stringData(data, "courseSlug");
+      return courseSlug ? `/courses/${courseSlug}` : null;
+    },
+    requiredRole: null,
+  },
+  "new-discussion-question": {
+    // The instructor's view of the lesson the question was asked on.
+    path: (data) =>
+      intData(data, "courseId") !== null && intData(data, "lessonId") !== null
+        ? `/instructor/${data.courseId}/lessons/${data.lessonId}`
+        : null,
+    requiredRole: "instructor",
+  },
+  "new-enrollment": {
+    path: (data) => {
+      const courseId = intData(data, "courseId");
+      return courseId !== null ? `/instructor/${courseId}/students` : null;
+    },
+    requiredRole: "instructor",
+  },
+  "seat-claimed": {
+    path: () => "/team",
+    // The team page is for the licence-buying Team's Admin — not every
+    // app-level role qualifies, so the check is on the viewer's membership.
+    requiredRole: "team-admin",
+  },
+  "refund-request-filed": {
+    path: () => "/admin/refunds",
+    requiredRole: "admin",
+  },
+};
+
+function stringData(
+  data: Record<string, string | number | boolean | null>,
+  key: string
+): string {
+  const value = data[key];
+  return typeof value === "string" ? value : "";
+}
+
+function intData(
+  data: Record<string, string | number | boolean | null>,
+  key: string
+): number | null {
+  const value = data[key];
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function roleAllows(
+  viewer: NotificationViewer,
+  requiredRole: RequiredNotificationRole
+): boolean {
+  switch (requiredRole) {
+    case null:
+      return true;
+    case "instructor":
+      return viewer.role === UserRole.Instructor || viewer.role === UserRole.Admin;
+    case "admin":
+      return viewer.role === UserRole.Admin;
+    case "team-admin":
+      return viewer.isTeamAdmin;
+  }
+}
+
+/**
+ * Maps a feed item to its deep-link destination: the path a click
+ * navigates to, the role required to see it, and the fallback path a
+ * clicker without that role lands on instead — never a 403. Returns null
+ * for unknown workflow keys, where there is nothing sensible to open.
+ */
+export function destinationForFeedItem(
+  item: FeedItemLike,
+  viewer: NotificationViewer
+): NotificationDestination | null {
+  const workflowKey = item.source?.key ?? null;
+  const workflow = workflowKey ? WORKFLOW_DESTINATIONS[workflowKey] : undefined;
+  if (!workflow) return null;
+
+  const data = item.data ?? {};
+  const courseSlug = stringData(data, "courseSlug");
+  const fallbackPath = courseSlug ? `/courses/${courseSlug}` : "/";
+
+  if (!roleAllows(viewer, workflow.requiredRole)) {
+    return { path: fallbackPath, requiredRole: workflow.requiredRole, fallbackPath };
+  }
+
+  const path = workflow.path(data) ?? fallbackPath;
+  return { path, requiredRole: workflow.requiredRole, fallbackPath };
 }
 
 /**
