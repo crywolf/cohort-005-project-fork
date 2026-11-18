@@ -6,6 +6,9 @@ import * as schema from "~/db/schema";
 import {
   defaultKnockClient,
   defaultKnockPreferencesClient,
+  DISCUSSION_ACTIVITY_CATEGORY,
+  NEW_STUDENTS_CATEGORY,
+  PURCHASES_REFUNDS_CATEGORY,
   knockUserId,
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
@@ -14,6 +17,7 @@ import {
   notifyRefundRequestDecided,
   notifyRefundRequestFiled,
   notifySeatClaimed,
+  readInAppNotificationPreferences,
   recordingKnockClient,
   recordingKnockPreferencesClient,
   signKnockUserToken,
@@ -720,6 +724,82 @@ describe("recordingKnockPreferencesClient", () => {
         },
       },
     ]);
+  });
+});
+
+describe("readInAppNotificationPreferences", () => {
+  it("defaults every category to on for a person who never touched settings", async () => {
+    const { client } = recordingKnockPreferencesClient();
+
+    await expect(
+      readInAppNotificationPreferences(base.user.id, client)
+    ).resolves.toEqual({
+      [DISCUSSION_ACTIVITY_CATEGORY]: true,
+      [PURCHASES_REFUNDS_CATEGORY]: true,
+      [NEW_STUDENTS_CATEGORY]: true,
+    });
+  });
+
+  it("reads a category switched off for the in-app feed", async () => {
+    const { client } = recordingKnockPreferencesClient({
+      preferenceSet: {
+        categories: {
+          [DISCUSSION_ACTIVITY_CATEGORY]: {
+            channel_types: { in_app_feed: false },
+          },
+          [NEW_STUDENTS_CATEGORY]: {
+            channel_types: { in_app_feed: true },
+          },
+        },
+      },
+    });
+
+    await expect(
+      readInAppNotificationPreferences(base.user.id, client)
+    ).resolves.toEqual({
+      [DISCUSSION_ACTIVITY_CATEGORY]: false,
+      [PURCHASES_REFUNDS_CATEGORY]: true,
+      [NEW_STUDENTS_CATEGORY]: true,
+    });
+  });
+
+  it("reads a category switched off as a whole", async () => {
+    const { client } = recordingKnockPreferencesClient({
+      preferenceSet: {
+        categories: { [PURCHASES_REFUNDS_CATEGORY]: false },
+      },
+    });
+
+    await expect(
+      readInAppNotificationPreferences(base.user.id, client)
+    ).resolves.toEqual({
+      [DISCUSSION_ACTIVITY_CATEGORY]: true,
+      [PURCHASES_REFUNDS_CATEGORY]: false,
+      [NEW_STUDENTS_CATEGORY]: true,
+    });
+  });
+
+  it("reads the signed-in person's own preference set", async () => {
+    const { client, reads } = recordingKnockPreferencesClient();
+
+    await readInAppNotificationPreferences(base.user.id, client);
+
+    expect(reads).toEqual([knockUserId(base.user.id)]);
+  });
+
+  it("falls back to the defaults when Knock is unreachable", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { client } = recordingKnockPreferencesClient({ failReads: true });
+
+    await expect(
+      readInAppNotificationPreferences(base.user.id, client)
+    ).resolves.toEqual({
+      [DISCUSSION_ACTIVITY_CATEGORY]: true,
+      [PURCHASES_REFUNDS_CATEGORY]: true,
+      [NEW_STUDENTS_CATEGORY]: true,
+    });
+
+    consoleError.mockRestore();
   });
 });
 

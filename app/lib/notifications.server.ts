@@ -239,6 +239,65 @@ export type RecordedPreferenceSetUpdate = {
   categories: Record<string, unknown>;
 };
 
+// The three Notification Categories, mapped 1:1 to Knock workflow
+// categories. `refund-request-filed` is deliberately in none of them — the
+// Platform Admin queue alert is always on and not a preference.
+export const DISCUSSION_ACTIVITY_CATEGORY = "discussion-activity";
+export const PURCHASES_REFUNDS_CATEGORY = "purchases-refunds";
+export const NEW_STUDENTS_CATEGORY = "new-students";
+
+export const NOTIFICATION_CATEGORIES = [
+  DISCUSSION_ACTIVITY_CATEGORY,
+  PURCHASES_REFUNDS_CATEGORY,
+  NEW_STUDENTS_CATEGORY,
+] as const;
+
+export type NotificationCategoryKey = (typeof NOTIFICATION_CATEGORIES)[number];
+
+const DEFAULT_IN_APP_PREFERENCES: Record<NotificationCategoryKey, boolean> = {
+  [DISCUSSION_ACTIVITY_CATEGORY]: true,
+  [PURCHASES_REFUNDS_CATEGORY]: true,
+  [NEW_STUDENTS_CATEGORY]: true,
+};
+
+function inAppFeedEnabledFor(
+  preferenceSet: KnockPreferenceSet | null,
+  categoryKey: NotificationCategoryKey
+): boolean {
+  const entry = preferenceSet?.categories?.[categoryKey];
+
+  // Anything not stored is at its default: on.
+  if (entry === undefined || entry === null) return true;
+  if (typeof entry === "boolean") return entry;
+
+  return entry.channel_types?.[IN_APP_FEED_CHANNEL_TYPE] !== false;
+}
+
+// The in-app on/off state of every Notification Category for a person, read
+// live from Knock so a role acquired later is immediately eligible at its
+// defaults. A Knock outage falls back to the defaults — the settings page
+// must stay loadable.
+export async function readInAppNotificationPreferences(
+  userId: number,
+  knock: KnockPreferencesClient = defaultKnockPreferencesClient()
+): Promise<Record<NotificationCategoryKey, boolean>> {
+  try {
+    const preferenceSet = await knock.getPreferenceSet(knockUserId(userId));
+    return Object.fromEntries(
+      NOTIFICATION_CATEGORIES.map((categoryKey) => [
+        categoryKey,
+        inAppFeedEnabledFor(preferenceSet, categoryKey),
+      ])
+    ) as Record<NotificationCategoryKey, boolean>;
+  } catch (error) {
+    console.error(
+      `Knock preference set read for ${knockUserId(userId)} failed:`,
+      error
+    );
+    return { ...DEFAULT_IN_APP_PREFERENCES };
+  }
+}
+
 export function recordingKnockPreferencesClient(
   options: {
     preferenceSet?: KnockPreferenceSet | null;
