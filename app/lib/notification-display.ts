@@ -37,7 +37,8 @@ export interface FeedItemActor {
 }
 
 export interface FeedItemLike {
-  actors?: Array<FeedItemActor | null> | null;
+  /** Structural on purpose: Knock's Recipient union narrows in describeFeedItem. */
+  actors?: readonly unknown[] | null;
   source?: { key?: string | null } | null;
   data?: Record<string, string | number | boolean | null> | null;
 }
@@ -93,6 +94,18 @@ function trimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** Narrows one entry of Knock's Recipient union to the actor fields a row renders. */
+function asActor(value: unknown): FeedItemActor | null {
+  if (typeof value !== "object" || value === null || !("name" in value)) {
+    return null;
+  }
+  const recipient = value as { name?: unknown; avatar?: unknown };
+  return {
+    name: typeof recipient.name === "string" && recipient.name ? recipient.name : null,
+    avatar: typeof recipient.avatar === "string" ? recipient.avatar : null,
+  };
+}
+
 /**
  * Maps a Knock feed item to the fields a notification row renders: the actor
  * (null for actorless events), the actor-action sentence, the context line,
@@ -103,7 +116,7 @@ export function describeFeedItem(item: FeedItemLike): FeedItemDisplay {
   const workflowKey = item.source?.key ?? null;
   const workflow = workflowKey ? WORKFLOW_DISPLAY[workflowKey] : undefined;
 
-  const actor = item.actors?.[0] ?? null;
+  const actor = asActor(item.actors?.[0] ?? null);
   const actorName =
     (workflow?.actorDataKey ? trimmedString(data[workflow.actorDataKey]) : "") ||
     (actor?.name?.trim() || null);

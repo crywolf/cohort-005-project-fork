@@ -143,7 +143,12 @@ export function Sidebar({
         </NavLink>
         {currentUser && (
           <div className="ml-auto">
-            <NotificationBell />
+            <NotificationBell
+              viewer={{
+                role: currentUser.role,
+                isTeamAdmin,
+              }}
+            />
           </div>
         )}
       </div>

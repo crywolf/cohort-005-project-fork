@@ -7,7 +7,10 @@ import {
   useNotifications,
   useNotificationStore,
 } from "@knocklabs/react";
-import { formatBadgeCount } from "~/lib/notification-display";
+import {
+  formatBadgeCount,
+  type NotificationViewer,
+} from "~/lib/notification-display";
 import { NotificationDrawer, PAGE_SIZE } from "~/components/notification-drawer";
 
 interface KnockSession {
@@ -23,7 +26,7 @@ interface KnockSession {
  * signed user token) from /api/knock-user-token; when Knock is not configured
  * it renders nothing, so the app degrades gracefully without credentials.
  */
-export function NotificationBell() {
+export function NotificationBell({ viewer }: { viewer: NotificationViewer }) {
   const fetcher = useFetcher<typeof knockUserTokenLoader>();
 
   useEffect(() => {
@@ -34,10 +37,16 @@ export function NotificationBell() {
   const session = fetcher.data;
   if (!session) return null;
 
-  return <BellAndDrawer session={session} />;
+  return <BellAndDrawer session={session} viewer={viewer} />;
 }
 
-function BellAndDrawer({ session }: { session: KnockSession }) {
+function BellAndDrawer({
+  session,
+  viewer,
+}: {
+  session: KnockSession;
+  viewer: NotificationViewer;
+}) {
   const [open, setOpen] = useState(false);
   const knock = useAuthenticatedKnockClient(
     session.publicApiKey,
@@ -76,6 +85,7 @@ function BellAndDrawer({ session }: { session: KnockSession }) {
         open={open}
         onClose={() => setOpen(false)}
         feedClient={feedClient}
+        viewer={viewer}
       />
     </>
   );
