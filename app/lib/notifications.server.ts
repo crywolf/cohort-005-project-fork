@@ -7,6 +7,9 @@
 // test suite stay green without credentials.
 
 import { createHmac } from "node:crypto";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import { eq } from "drizzle-orm";
+import * as schema from "~/db/schema";
 
 export function knockUserId(userId: number): string {
   return `user-${userId}`;
@@ -120,4 +123,92 @@ export function recordingKnockClient(): {
 export function defaultKnockClient(): KnockClient {
   const apiKey = process.env.KNOCK_API_KEY;
   return apiKey ? knockApiTransport(apiKey) : noopKnockClient();
+}
+
+// ─── Triggers ───
+// One function per catalogue event. Each takes the database first and the
+// id of the domain row that produced the event, resolves the recipient's
+// identity lazily at send time (so profile changes propagate), and calls
+// Knock. Delivery failures are logged and swallowed: a Knock outage must
+// never fail the domain action the user just made.
+
+export type Db = BetterSQLite3Database<typeof schema>;
+
+function getUser(db: Db, userId: number) {
+  return db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
+}
+
+function getComment(db: Db, commentId: number) {
+  return db
+    .select()
+    .from(schema.comments)
+    .where(eq(schema.comments.id, commentId))
+    .get();
+}
+
+function getCourseForLesson(db: Db, lessonId: number) {
+  return db
+    .select({
+      courseId: schema.courses.id,
+      courseTitle: schema.courses.title,
+      courseSlug: schema.courses.slug,
+      instructorId: schema.courses.instructorId,
+    })
+    .from(schema.lessons)
+    .innerJoin(schema.modules, eq(schema.lessons.moduleId, schema.modules.id))
+    .innerJoin(schema.courses, eq(schema.modules.courseId, schema.courses.id))
+    .where(eq(schema.lessons.id, lessonId))
+    .get();
+}
+
+function getLesson(db: Db, lessonId: number) {
+  return db
+    .select()
+    .from(schema.lessons)
+    .where(eq(schema.lessons.id, lessonId))
+    .get();
+}
+
+function recipientOf(user: typeof schema.users.$inferSelect): KnockRecipient {
+  return {
+    id: knockUserId(user.id),
+    name: user.name,
+    email: user.email,
+    avatar: user.avatarUrl,
+  };
+}
+
+export const DISCUSSION_REPLY_WORKFLOW = "discussion-reply-posted";
+
+export async function notifyDiscussionReplyPosted(
+  db: Db,
+  input: { commentId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const reply = getComment(db, input.commentId);
+  if (!reply || reply.parentId === null) return;
+
+  const question = getComment(db, reply.parentId);
+  if (!question) return;
+
+  // A Notification announces an action the recipient didn't initiate.
+  if (question.userId === reply.userId) return;
+
+  const author = getUser(db, question.userId);
+  const replier = getUser(db, reply.userId);
+  const lesson = getLesson(db, reply.lessonId);
+  const course = getCourseForLesson(db, reply.lessonId);
+  if (!author || !replier || !lesson || !course) return;
+
+  await knock.trigger(DISCUSSION_REPLY_WORKFLOW, {
+    recipients: [recipientOf(author)],
+    data: {
+      replierName: replier.name,
+      courseTitle: course.courseTitle,
+      courseSlug: course.courseSlug,
+      lessonId: lesson.id,
+      lessonTitle: lesson.title,
+      replyBody: reply.body,
+    },
+  });
 }

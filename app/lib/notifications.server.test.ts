@@ -1,12 +1,54 @@
-import { afterEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { createTestDb, seedBaseData } from "~/test/setup";
+import * as schema from "~/db/schema";
 import {
   defaultKnockClient,
   knockUserId,
+  notifyDiscussionReplyPosted,
   recordingKnockClient,
   signKnockUserToken,
 } from "./notifications.server";
+
+type TestDb = ReturnType<typeof createTestDb>;
+
+let db: TestDb;
+let base: ReturnType<typeof seedBaseData>;
+let lessonId: number;
+
+beforeEach(() => {
+  db = createTestDb();
+  base = seedBaseData(db);
+
+  const module = db
+    .insert(schema.modules)
+    .values({ courseId: base.course.id, title: "Basics", position: 1 })
+    .returning()
+    .get();
+
+  lessonId = db
+    .insert(schema.lessons)
+    .values({ moduleId: module.id, title: "Frets 101", position: 1 })
+    .returning()
+    .get().id;
+});
+
+function seedQuestion(authorId: number, body = "How do I barre chord?") {
+  return db
+    .insert(schema.comments)
+    .values({ userId: authorId, lessonId, parentId: null, body })
+    .returning()
+    .get();
+}
+
+function seedReply(replierId: number, questionId: number, body = "Practice slowly.") {
+  return db
+    .insert(schema.comments)
+    .values({ userId: replierId, lessonId, parentId: questionId, body })
+    .returning()
+    .get();
+}
 
 describe("knockUserId", () => {
   it("derives the canonical Knock user id from the app user's database id", () => {
@@ -96,6 +138,52 @@ describe("defaultKnockClient", () => {
         data: {},
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyDiscussionReplyPosted", () => {
+  it("notifies the question's author with the reply in context", async () => {
+    const { client, calls } = recordingKnockClient();
+    const question = seedQuestion(base.user.id);
+    const reply = seedReply(base.instructor.id, question.id);
+
+    await notifyDiscussionReplyPosted(
+      db,
+      { commentId: reply.id },
+      client
+    );
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("discussion-reply-posted");
+    // Inline identification of the question's author, never the replier.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      replierName: base.instructor.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      lessonId,
+      lessonTitle: "Frets 101",
+      replyBody: "Practice slowly.",
+    });
+  });
+
+  it("never notifies the replier — no notification for your own question", async () => {
+    const { client, calls } = recordingKnockClient();
+    const question = seedQuestion(base.user.id);
+    const reply = seedReply(base.user.id, question.id);
+
+    await notifyDiscussionReplyPosted(db, { commentId: reply.id }, client);
+
+    expect(calls).toEqual([]);
   });
 });
 
