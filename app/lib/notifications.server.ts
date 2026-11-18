@@ -6,7 +6,7 @@
 // Without KNOCK_API_KEY the default client is a no-op, so the app and the
 // test suite stay green without credentials.
 
-import { createHmac } from "node:crypto";
+import { createSign, generateKeyPairSync } from "node:crypto";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { and, eq } from "drizzle-orm";
 import * as schema from "~/db/schema";
@@ -41,9 +41,16 @@ export function knockUserId(userId: number): string {
 
 // ─── User token signing ───
 // Enhanced security mode: the feed client authenticates with a short-lived
-// JWT signed with the Knock signing key.
+// JWT signed with the Knock signing key. Knock's signing key is an RSA
+// private key, so the JWT must be signed with RS256 — the dashboard presents
+// the key base-64 encoded (a single-line PEM), which we decode before use.
 
 const TOKEN_DEFAULT_TTL_SECONDS = 3600;
+
+function knockSigningKeyPem(signingKey: string): string {
+  if (signingKey.includes("-----BEGIN")) return signingKey;
+  return Buffer.from(signingKey, "base64").toString("utf8");
+}
 
 export function signKnockUserToken(
   userId: number,
@@ -56,7 +63,7 @@ export function signKnockUserToken(
     );
   }
 
-  const header = { alg: "HS256", typ: "JWT" };
+  const header = { alg: "RS256", typ: "JWT" };
   const issuedAt = Math.floor(Date.now() / 1000);
   const payload = {
     sub: knockUserId(userId),
@@ -67,11 +74,29 @@ export function signKnockUserToken(
   const encode = (value: object) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
   const unsigned = `${encode(header)}.${encode(payload)}`;
-  const signature = createHmac("sha256", signingKey)
+  const signature = createSign("RSA-SHA256")
     .update(unsigned)
-    .digest("base64url");
+    .sign(knockSigningKeyPem(signingKey), "base64url");
 
   return `${unsigned}.${signature}`;
+}
+
+// Exposed for tests: generates an RSA keypair whose base64-encoded private
+// key can be passed to signKnockUserToken as a stand-in signing key.
+export function generateTestSigningKey(): {
+  signingKey: string;
+  publicKey: string;
+} {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  return {
+    signingKey: Buffer.from(
+      privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+      "utf8"
+    ).toString("base64"),
+    publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
+  };
 }
 
 // ─── The Knock client behind an injected interface ───
@@ -97,12 +122,12 @@ export type KnockRecipient = {
   avatar?: string | null;
 };
 
-// The header block every Knock REST call needs: the API key as the Basic
-// username with an empty password, JSON bodies.
+// The header block every Knock REST call needs: the secret API key as a
+// Bearer token, JSON bodies.
 function knockApiHeaders(apiKey: string) {
   return {
     "Content-Type": "application/json",
-    Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+    Authorization: `Bearer ${apiKey}`,
   };
 }
 
@@ -266,40 +291,24 @@ export type RecordedPreferenceSetUpdate = {
   categories: Record<string, unknown>;
 };
 
-// The three Notification Categories, mapped 1:1 to Knock workflow
-// categories. `refund-request-filed` is deliberately in none of them — the
-// Platform Admin queue alert is always on and not a preference.
-export const DISCUSSION_ACTIVITY_CATEGORY = "discussion-activity";
-export const PURCHASES_REFUNDS_CATEGORY = "purchases-refunds";
-export const NEW_STUDENTS_CATEGORY = "new-students";
-
-export const NOTIFICATION_CATEGORIES = [
+// The category constants and the role-relevance helper live in the
+// client-safe notification-preferences module (the settings page renders the
+// preference card in the browser); re-exported here for server callers.
+import {
   DISCUSSION_ACTIVITY_CATEGORY,
   PURCHASES_REFUNDS_CATEGORY,
   NEW_STUDENTS_CATEGORY,
-] as const;
-
-export type NotificationCategoryKey = (typeof NOTIFICATION_CATEGORIES)[number];
-
-// The Categories the settings card shows a person, at their roles: the
-// app-level role plus whether they administer a Team. A Team Admin receives
-// seat-claimed and licence-purchase notifications even when their app-level
-// role is Student or Instructor, so they get the Purchases & refunds toggle
-// too. Platform Admins get no toggles — the refund-queue alert is always on
-// and not a preference.
-export function relevantNotificationCategories(
-  role: schema.UserRole,
-  isTeamAdmin: boolean
-): NotificationCategoryKey[] {
-  if (role === schema.UserRole.Admin) return [];
-
-  const categories: NotificationCategoryKey[] = [DISCUSSION_ACTIVITY_CATEGORY];
-  if (role === schema.UserRole.Instructor) categories.push(NEW_STUDENTS_CATEGORY);
-  if (role === schema.UserRole.Student || isTeamAdmin) {
-    categories.push(PURCHASES_REFUNDS_CATEGORY);
-  }
-  return categories;
-}
+  NOTIFICATION_CATEGORIES,
+  relevantNotificationCategories,
+  type NotificationCategoryKey,
+} from "./notification-preferences";
+export {
+  DISCUSSION_ACTIVITY_CATEGORY,
+  PURCHASES_REFUNDS_CATEGORY,
+  NEW_STUDENTS_CATEGORY,
+  NOTIFICATION_CATEGORIES,
+  relevantNotificationCategories,
+} from "./notification-preferences";
 
 const DEFAULT_IN_APP_PREFERENCES: Record<NotificationCategoryKey, boolean> = {
   [DISCUSSION_ACTIVITY_CATEGORY]: true,

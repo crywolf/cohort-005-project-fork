@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createHmac } from "node:crypto";
+import { createVerify } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
@@ -22,6 +22,7 @@ import {
   relevantNotificationCategories,
   writeInAppNotificationPreference,
   recordingKnockPreferencesClient,
+  generateTestSigningKey,
   signKnockUserToken,
   type KnockClient,
 } from "./notifications.server";
@@ -161,7 +162,9 @@ describe("knockUserId", () => {
 });
 
 describe("signKnockUserToken", () => {
-  const signingKey = "sk_test_signing_key";
+  // Knock's signing key is an RSA private key (presented base-64 encoded), so
+  // the token must be signed with RS256 and verifies against the public key.
+  const { signingKey, publicKey } = generateTestSigningKey();
 
   function decodeSegment(segment: string): unknown {
     return JSON.parse(Buffer.from(segment, "base64url").toString("utf8"));
@@ -177,7 +180,7 @@ describe("signKnockUserToken", () => {
       throw new Error("token is not three dot-separated segments");
     }
 
-    expect(decodeSegment(header)).toEqual({ alg: "HS256", typ: "JWT" });
+    expect(decodeSegment(header)).toEqual({ alg: "RS256", typ: "JWT" });
     const claims = decodeSegment(payload) as { sub?: string; iat?: number; exp?: number };
     expect(claims.sub).toBe("user-7");
     expect(claims.iat).toBeGreaterThanOrEqual(before);
@@ -186,17 +189,31 @@ describe("signKnockUserToken", () => {
     expect(claims.exp).toBe(claims.iat! + 3600);
   });
 
-  it("verifies against the signing key with HMAC-SHA256", () => {
+  it("verifies against the signing key's public key with RSA-SHA256", () => {
     const token = signKnockUserToken(7, { signingKey });
     const [header, payload, signature] = token.split(".");
     if (!header || !payload || !signature) {
       throw new Error("token is not three dot-separated segments");
     }
 
-    const expected = createHmac("sha256", signingKey)
+    const verified = createVerify("RSA-SHA256")
       .update(`${header}.${payload}`)
-      .digest("base64url");
-    expect(signature).toBe(expected);
+      .verify(publicKey, signature, "base64url");
+    expect(verified).toBe(true);
+  });
+
+  it("accepts a raw PEM signing key as well as the base-64 encoded form", () => {
+    const pem = Buffer.from(signingKey, "base64").toString("utf8");
+    const token = signKnockUserToken(7, { signingKey: pem });
+    const [header, payload, signature] = token.split(".");
+    if (!header || !payload || !signature) {
+      throw new Error("token is not three dot-separated segments");
+    }
+
+    const verified = createVerify("RSA-SHA256")
+      .update(`${header}.${payload}`)
+      .verify(publicKey, signature, "base64url");
+    expect(verified).toBe(true);
   });
 
   it("honours a custom lifetime", () => {

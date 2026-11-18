@@ -13,14 +13,16 @@ import { Textarea } from "~/components/ui/textarea";
 import { UserRole, RefundStatus, users, teamMembers, TeamMemberRole } from "~/db/schema";
 import {
   readInAppNotificationPreferences,
-  relevantNotificationCategories,
   writeInAppNotificationPreference,
+} from "~/lib/notifications.server";
+import {
+  relevantNotificationCategories,
   DISCUSSION_ACTIVITY_CATEGORY,
   NEW_STUDENTS_CATEGORY,
   NOTIFICATION_CATEGORIES,
   PURCHASES_REFUNDS_CATEGORY,
   type NotificationCategoryKey,
-} from "~/lib/notifications.server";
+} from "~/lib/notification-preferences";
 import {
   AlertTriangle,
   Bell,

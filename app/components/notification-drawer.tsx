@@ -110,7 +110,9 @@ export function NotificationDrawer({
         aria-label="Notifications"
         className={cn(
           "fixed inset-y-0 left-56 z-40 flex w-[400px] flex-col border-r border-border bg-background shadow-xl transition-transform duration-200",
-          open ? "translate-x-0" : "-translate-x-full"
+          // Closed must clear both the drawer's own width AND the left-56
+          // offset, or its right edge keeps covering the 224px sidebar.
+          open ? "translate-x-0" : "-translate-x-[calc(100%+14rem)]"
         )}
       >
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
