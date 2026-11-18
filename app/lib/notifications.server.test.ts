@@ -7,6 +7,7 @@ import {
   defaultKnockClient,
   knockUserId,
   notifyDiscussionReplyPosted,
+  notifyNewDiscussionQuestionPosted,
   recordingKnockClient,
   signKnockUserToken,
 } from "./notifications.server";
@@ -182,6 +183,68 @@ describe("notifyDiscussionReplyPosted", () => {
     const reply = seedReply(base.user.id, question.id);
 
     await notifyDiscussionReplyPosted(db, { commentId: reply.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("notifyNewDiscussionQuestionPosted", () => {
+  it("notifies the course's instructor with the question in context", async () => {
+    const { client, calls } = recordingKnockClient();
+    const question = seedQuestion(base.user.id);
+
+    await notifyNewDiscussionQuestionPosted(
+      db,
+      { commentId: question.id },
+      client
+    );
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("new-discussion-question");
+    // Inline identification of the course's instructor.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.instructor.id),
+        name: base.instructor.name,
+        email: base.instructor.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      authorName: base.user.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      lessonId,
+      lessonTitle: "Frets 101",
+      questionBody: "How do I barre chord?",
+    });
+  });
+
+  it("never notifies the instructor about their own question", async () => {
+    const { client, calls } = recordingKnockClient();
+    const question = seedQuestion(base.instructor.id);
+
+    await notifyNewDiscussionQuestionPosted(
+      db,
+      { commentId: question.id },
+      client
+    );
+
+    expect(calls).toEqual([]);
+  });
+
+  it("sends nothing for a reply, not a question", async () => {
+    const { client, calls } = recordingKnockClient();
+    const question = seedQuestion(base.user.id);
+    const reply = seedReply(base.instructor.id, question.id);
+
+    await notifyNewDiscussionQuestionPosted(
+      db,
+      { commentId: reply.id },
+      client
+    );
 
     expect(calls).toEqual([]);
   });

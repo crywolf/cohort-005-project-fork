@@ -212,3 +212,38 @@ export async function notifyDiscussionReplyPosted(
     },
   });
 }
+
+export const NEW_DISCUSSION_QUESTION_WORKFLOW = "new-discussion-question";
+
+export async function notifyNewDiscussionQuestionPosted(
+  db: Db,
+  input: { commentId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const question = getComment(db, input.commentId);
+  if (!question || question.parentId !== null) return;
+
+  const course = getCourseForLesson(db, question.lessonId);
+  if (!course) return;
+
+  // A Notification announces an action the recipient didn't initiate —
+  // the instructor asking a question on their own course is no news.
+  if (course.instructorId === question.userId) return;
+
+  const instructor = getUser(db, course.instructorId);
+  const author = getUser(db, question.userId);
+  const lesson = getLesson(db, question.lessonId);
+  if (!instructor || !author || !lesson) return;
+
+  await knock.trigger(NEW_DISCUSSION_QUESTION_WORKFLOW, {
+    recipients: [recipientOf(instructor)],
+    data: {
+      authorName: author.name,
+      courseTitle: course.courseTitle,
+      courseSlug: course.courseSlug,
+      lessonId: lesson.id,
+      lessonTitle: lesson.title,
+      questionBody: question.body,
+    },
+  });
+}
