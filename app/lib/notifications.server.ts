@@ -8,7 +8,7 @@
 
 import { createHmac } from "node:crypto";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "~/db/schema";
 
 export function knockUserId(userId: number): string {
@@ -195,6 +195,31 @@ function getSeats(db: Db, purchaseId: number) {
     .all();
 }
 
+function getCoupon(db: Db, couponId: number) {
+  return db
+    .select()
+    .from(schema.coupons)
+    .where(eq(schema.coupons.id, couponId))
+    .get();
+}
+
+function getTeamAdmin(db: Db, teamId: number) {
+  const membership = db
+    .select()
+    .from(schema.teamMembers)
+    .where(
+      and(
+        eq(schema.teamMembers.teamId, teamId),
+        eq(schema.teamMembers.role, schema.TeamMemberRole.Admin)
+      )
+    )
+    .get();
+
+  if (!membership) return undefined;
+
+  return getUser(db, membership.userId);
+}
+
 // There is no column saying which kind a Purchase is: a Team Licence is the
 // Purchase that granted Seats, and every Team Licence grants at least one.
 type PurchaseKind = "individual_purchase" | "team_licence";
@@ -288,6 +313,38 @@ export async function notifyPurchaseFinalized(
       amountPaid: purchase.amountPaid,
       kind,
       ...(kind === "team_licence" ? { teamUrl: "/team" } : {}),
+    },
+  });
+}
+
+export const SEAT_CLAIMED_WORKFLOW = "seat-claimed";
+
+export async function notifySeatClaimed(
+  db: Db,
+  input: { couponId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const coupon = getCoupon(db, input.couponId);
+  if (!coupon || coupon.redeemedByUserId === null) return;
+
+  const admin = getTeamAdmin(db, coupon.teamId);
+  if (!admin) return;
+
+  // A Notification announces an action the recipient didn't initiate —
+  // the Team Admin claiming a Seat on their own Licence is no news.
+  if (admin.id === coupon.redeemedByUserId) return;
+
+  const claimer = getUser(db, coupon.redeemedByUserId);
+  const course = getCourse(db, coupon.courseId);
+  if (!claimer || !course) return;
+
+  await deliver(knock, SEAT_CLAIMED_WORKFLOW, {
+    recipients: [recipientOf(admin)],
+    data: {
+      claimerName: claimer.name,
+      courseTitle: course.title,
+      courseSlug: course.slug,
+      teamUrl: "/team",
     },
   });
 }

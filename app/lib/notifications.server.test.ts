@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import {
@@ -8,6 +9,7 @@ import {
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
   notifyPurchaseFinalized,
+  notifySeatClaimed,
   recordingKnockClient,
   signKnockUserToken,
   type KnockClient,
@@ -75,18 +77,38 @@ function seedTeamLicence(buyerId: number, courseId: number, seats: number) {
     .values({ teamId: team.id, userId: buyerId, role: schema.TeamMemberRole.Admin })
     .returning()
     .get();
+  const coupons: (typeof schema.coupons.$inferSelect)[] = [];
   for (let i = 0; i < seats; i++) {
-    db.insert(schema.coupons)
-      .values({
-        teamId: team.id,
-        courseId,
-        code: `code-${purchase.id}-${i}`,
-        purchaseId: purchase.id,
-      })
-      .returning()
-      .get();
+    coupons.push(
+      db.insert(schema.coupons)
+        .values({
+          teamId: team.id,
+          courseId,
+          code: `code-${purchase.id}-${i}`,
+          purchaseId: purchase.id,
+        })
+        .returning()
+        .get()
+    );
   }
-  return purchase;
+  return { purchase, team, coupons };
+}
+
+function claimSeat(couponId: number, userId: number) {
+  return db
+    .update(schema.coupons)
+    .set({ redeemedByUserId: userId, redeemedAt: new Date().toISOString() })
+    .where(eq(schema.coupons.id, couponId))
+    .returning()
+    .get();
+}
+
+function seedMember(name: string, email: string) {
+  return db
+    .insert(schema.users)
+    .values({ name, email, role: schema.UserRole.Student })
+    .returning()
+    .get();
 }
 
 describe("knockUserId", () => {
@@ -319,9 +341,9 @@ describe("notifyPurchaseFinalized", () => {
 
   it("notifies the Team Admin — the buyer — when a Team Licence finalizes", async () => {
     const { client, calls } = recordingKnockClient();
-    const purchase = seedTeamLicence(base.user.id, base.course.id, 5);
+    const licence = seedTeamLicence(base.user.id, base.course.id, 5);
 
-    await notifyPurchaseFinalized(db, { purchaseId: purchase.id }, client);
+    await notifyPurchaseFinalized(db, { purchaseId: licence.purchase.id }, client);
 
     expect(calls).toHaveLength(1);
     const call = calls[0];
@@ -349,6 +371,57 @@ describe("notifyPurchaseFinalized", () => {
 
     await expect(
       notifyPurchaseFinalized(db, { purchaseId: purchase.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifySeatClaimed", () => {
+  it("notifies the Team Admin when a Seat on their Team Licence is claimed", async () => {
+    const { client, calls } = recordingKnockClient();
+    const licence = seedTeamLicence(base.user.id, base.course.id, 3);
+    const member = seedMember("Team Member", "member@example.com");
+    const coupon = claimSeat(licence.coupons[0]!.id, member.id);
+
+    await notifySeatClaimed(db, { couponId: coupon.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("seat-claimed");
+    // Inline identification of the Team Admin, never the Seat claimer.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      claimerName: member.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      teamUrl: "/team",
+    });
+  });
+
+  it("never notifies the Team Admin about their own seat claim", async () => {
+    const { client, calls } = recordingKnockClient();
+    const licence = seedTeamLicence(base.user.id, base.course.id, 3);
+    const coupon = claimSeat(licence.coupons[0]!.id, base.user.id);
+
+    await notifySeatClaimed(db, { couponId: coupon.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("a Knock outage never fails the seat claim", async () => {
+    const licence = seedTeamLicence(base.user.id, base.course.id, 3);
+    const member = seedMember("Team Member", "member@example.com");
+    const coupon = claimSeat(licence.coupons[0]!.id, member.id);
+
+    await expect(
+      notifySeatClaimed(db, { couponId: coupon.id }, failingKnockClient())
     ).resolves.toBeUndefined();
   });
 });
