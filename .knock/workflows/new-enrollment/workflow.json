@@ -1,0 +1,26 @@
+{
+  "name": "New enrollment",
+  "description": "A student enrolled in one of the instructor's courses.",
+  "steps": [
+    {
+      "type": "channel",
+      "template": {
+        "action_url": "/instructor/{{ data.courseId }}/students",
+        "markdown_body@": "in_app_feed_1/markdown_body.md"
+      },
+      "ref": "in_app_feed_1",
+      "channel_type": "in_app_feed",
+      "channel_key": "in-app"
+    }
+  ],
+  "categories": [
+    "new-students"
+  ],
+  "trigger_frequency": "every_trigger",
+  "__readonly": {
+    "key": "new-enrollment",
+    "active": true,
+    "valid": true
+  },
+  "$schema": "https://schemas.knock.app/cli/workflow.json"
+}

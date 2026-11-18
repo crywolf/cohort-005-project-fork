@@ -1,0 +1,1 @@
+**{{ data.studentName }}** enrolled in your course **{{ data.courseTitle }}**.
