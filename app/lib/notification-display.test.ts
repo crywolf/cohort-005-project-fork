@@ -94,6 +94,16 @@ describe("describeFeedItem", () => {
     expect(display.contextLine).toBe("Your purchase went through.");
   });
 
+  it("surfaces the actor's avatar url for the row avatar", () => {
+    const display = describeFeedItem({
+      source: { key: "discussion-reply-posted" },
+      data: { replierName: "Ada Lovelace", replyBody: "Try narrowing the type first." },
+      actors: [{ name: "Ada Lovelace", avatar: "https://example.com/ada.png" }],
+    });
+
+    expect(display.actorAvatar).toBe("https://example.com/ada.png");
+  });
+
   it("never crashes on an item with no data", () => {
     const display = describeFeedItem({ source: { key: "seat-claimed" } });
 

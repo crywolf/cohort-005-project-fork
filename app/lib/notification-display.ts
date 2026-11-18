@@ -30,7 +30,7 @@ export function relativeTime(isoDate: string, now: Date = new Date()): string {
  * from the Knock client.
  */
 export interface FeedItemLike {
-  actors?: Array<{ name?: string | null } | null> | null;
+  actors?: Array<{ name?: string | null; avatar?: string | null } | null> | null;
   source?: { key?: string | null } | null;
   data?: Record<string, string | number | boolean | null> | null;
 }
@@ -38,6 +38,8 @@ export interface FeedItemLike {
 export interface FeedItemDisplay {
   /** The person who acted, or null for actorless events (event-type icon). */
   actorName: string | null;
+  /** The actor's avatar url, or null when the actor has none. */
+  actorAvatar: string | null;
   /** Actor + action, e.g. "replied to your question on …". */
   action: string;
   /** The notification's body text as a single plain line. */
@@ -94,9 +96,11 @@ export function describeFeedItem(item: FeedItemLike): FeedItemDisplay {
   const workflowKey = item.source?.key ?? null;
   const workflow = workflowKey ? WORKFLOW_DISPLAY[workflowKey] : undefined;
 
+  const actor = item.actors?.[0] ?? null;
   const actorName =
     (workflow?.actorDataKey ? trimmedString(data[workflow.actorDataKey]) : "") ||
-    (item.actors?.[0]?.name?.trim() || null);
+    (actor?.name?.trim() || null);
+  const actorAvatar = actor?.avatar ?? null;
 
   const eventLabel = workflow
     ? workflow.eventLabel
@@ -106,6 +110,7 @@ export function describeFeedItem(item: FeedItemLike): FeedItemDisplay {
 
   return {
     actorName,
+    actorAvatar,
     action: workflow ? workflow.action(data) : eventLabel,
     contextLine:
       (workflow?.contextDataKey ? trimmedString(data[workflow.contextDataKey]) : "") ||
