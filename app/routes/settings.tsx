@@ -10,9 +10,10 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
-import { UserRole, RefundStatus, users } from "~/db/schema";
+import { UserRole, RefundStatus, users, teamMembers, TeamMemberRole } from "~/db/schema";
 import {
   readInAppNotificationPreferences,
+  relevantNotificationCategories,
   writeInAppNotificationPreference,
   DISCUSSION_ACTIVITY_CATEGORY,
   NEW_STUDENTS_CATEGORY,
@@ -32,7 +33,7 @@ import {
 } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
 import { listRefundRequestsForBuyer } from "~/lib/refunds.server";
 
@@ -46,22 +47,19 @@ const notificationPreferenceSchema = z.object({
   enabled: z.enum(["true", "false"]).transform((value) => value === "true"),
 });
 
-// A Category shows only when one of its events can fire at this person's
-// roles (the decided model from the preferences prototype round): Students
-// get Discussion activity and Purchases & refunds, Instructors get
-// Discussion activity and New students. Platform Admins get no toggles —
-// the refund-queue alert is always on and not a preference.
-function relevantNotificationCategories(
-  role: UserRole
-): NotificationCategoryKey[] {
-  switch (role) {
-    case UserRole.Student:
-      return [DISCUSSION_ACTIVITY_CATEGORY, PURCHASES_REFUNDS_CATEGORY];
-    case UserRole.Instructor:
-      return [DISCUSSION_ACTIVITY_CATEGORY, NEW_STUDENTS_CATEGORY];
-    case UserRole.Admin:
-      return [];
-  }
+function isTeamAdmin(userId: number) {
+  return (
+    db
+      .select()
+      .from(teamMembers)
+      .where(
+        and(
+          eq(teamMembers.userId, userId),
+          eq(teamMembers.role, TeamMemberRole.Admin)
+        )
+      )
+      .get() !== undefined
+  );
 }
 
 export function meta() {
@@ -98,7 +96,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     currentUserId
   );
   const notificationCategories = relevantNotificationCategories(
-    currentUser.role
+    currentUser.role,
+    // The app-level role alone misses a Team Admin whose role is Student or
+    // Instructor — they still receive seat-claim notifications.
+    isTeamAdmin(currentUser.id)
   ).map((categoryKey) => ({
     categoryKey,
     inApp: inAppPreferences[categoryKey],
@@ -448,9 +449,12 @@ function NotificationCategoryRow({
   inApp: boolean;
 }) {
   const copy = NOTIFICATION_CATEGORY_COPY[categoryKey];
+  // A Team Admin whose app role is Instructor sees Purchases & refunds as
+  // the licence's buyer, not its instructor — fall back to the other
+  // persona's copy when the role's own copy is empty.
   const description =
     role === UserRole.Instructor
-      ? copy.instructorDescription
+      ? copy.instructorDescription || copy.studentDescription
       : copy.studentDescription;
   const Icon = copy.icon;
 
