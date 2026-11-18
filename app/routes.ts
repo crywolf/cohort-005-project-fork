@@ -54,4 +54,5 @@ export default [
   route("api/logout", "routes/api.logout.ts"),
   route("api/video-tracking", "routes/api.video-tracking.ts"),
   route("api/set-dev-country", "routes/api.set-dev-country.ts"),
+  route("api/knock-user-token", "routes/api.knock-user-token.ts"),
 ] satisfies RouteConfig;
