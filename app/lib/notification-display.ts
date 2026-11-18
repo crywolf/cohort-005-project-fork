@@ -29,8 +29,13 @@ export function relativeTime(isoDate: string, now: Date = new Date()): string {
  * (not the SDK type) so tests can build it by hand and the UI stays decoupled
  * from the Knock client.
  */
+export interface FeedItemActor {
+  name?: string | null;
+  avatar?: string | null;
+}
+
 export interface FeedItemLike {
-  actors?: Array<{ name?: string | null; avatar?: string | null } | null> | null;
+  actors?: Array<FeedItemActor | null> | null;
   source?: { key?: string | null } | null;
   data?: Record<string, string | number | boolean | null> | null;
 }
