@@ -105,11 +105,13 @@ export function noopKnockClient(): KnockClient {
 
 // The fake behind the interface for tests: records every trigger call so
 // assertions can be made on the recipients and payloads that went out.
+export type RecordedKnockTrigger = { workflowKey: string } & KnockTriggerInput;
+
 export function recordingKnockClient(): {
   client: KnockClient;
-  calls: { workflowKey: string } & KnockTriggerInput[];
+  calls: RecordedKnockTrigger[];
 } {
-  const calls: { workflowKey: string } & KnockTriggerInput[] = [];
+  const calls: RecordedKnockTrigger[] = [];
   return {
     calls,
     client: {
