@@ -178,6 +178,20 @@ function recipientOf(user: typeof schema.users.$inferSelect): KnockRecipient {
   };
 }
 
+async function deliver(
+  knock: KnockClient,
+  workflowKey: string,
+  input: KnockTriggerInput
+): Promise<void> {
+  try {
+    await knock.trigger(workflowKey, input);
+  } catch (error) {
+    // Logged and swallowed: a Knock outage must never fail the comment,
+    // purchase or refund decision the user just made.
+    console.error(`Knock trigger ${workflowKey} failed:`, error);
+  }
+}
+
 export const DISCUSSION_REPLY_WORKFLOW = "discussion-reply-posted";
 
 export async function notifyDiscussionReplyPosted(
@@ -200,7 +214,7 @@ export async function notifyDiscussionReplyPosted(
   const course = getCourseForLesson(db, reply.lessonId);
   if (!author || !replier || !lesson || !course) return;
 
-  await knock.trigger(DISCUSSION_REPLY_WORKFLOW, {
+  await deliver(knock, DISCUSSION_REPLY_WORKFLOW, {
     recipients: [recipientOf(author)],
     data: {
       replierName: replier.name,
@@ -235,7 +249,7 @@ export async function notifyNewDiscussionQuestionPosted(
   const lesson = getLesson(db, question.lessonId);
   if (!instructor || !author || !lesson) return;
 
-  await knock.trigger(NEW_DISCUSSION_QUESTION_WORKFLOW, {
+  await deliver(knock, NEW_DISCUSSION_QUESTION_WORKFLOW, {
     recipients: [recipientOf(instructor)],
     data: {
       authorName: author.name,

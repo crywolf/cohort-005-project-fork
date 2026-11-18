@@ -1,4 +1,4 @@
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createTestDb, seedBaseData } from "~/test/setup";
@@ -10,7 +10,16 @@ import {
   notifyNewDiscussionQuestionPosted,
   recordingKnockClient,
   signKnockUserToken,
+  type KnockClient,
 } from "./notifications.server";
+
+function failingKnockClient(): KnockClient {
+  return {
+    async trigger() {
+      throw new Error("Knock is down");
+    },
+  };
+}
 
 type TestDb = ReturnType<typeof createTestDb>;
 
@@ -247,6 +256,37 @@ describe("notifyNewDiscussionQuestionPosted", () => {
     );
 
     expect(calls).toEqual([]);
+  });
+});
+
+describe("delivery failures", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a Knock outage on a reply never fails the comment", async () => {
+    const question = seedQuestion(base.user.id);
+    const reply = seedReply(base.instructor.id, question.id);
+
+    await expect(
+      notifyDiscussionReplyPosted(db, { commentId: reply.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+
+  it("a Knock outage on a new question never fails the comment", async () => {
+    const question = seedQuestion(base.user.id);
+
+    await expect(
+      notifyNewDiscussionQuestionPosted(
+        db,
+        { commentId: question.id },
+        failingKnockClient()
+      )
+    ).resolves.toBeUndefined();
   });
 });
 
