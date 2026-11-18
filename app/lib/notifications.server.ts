@@ -8,7 +8,7 @@
 
 import { createHmac } from "node:crypto";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "~/db/schema";
 
 export function knockUserId(userId: number): string {
@@ -171,6 +171,79 @@ function getLesson(db: Db, lessonId: number) {
     .get();
 }
 
+function getCourse(db: Db, courseId: number) {
+  return db
+    .select()
+    .from(schema.courses)
+    .where(eq(schema.courses.id, courseId))
+    .get();
+}
+
+function getPurchase(db: Db, purchaseId: number) {
+  return db
+    .select()
+    .from(schema.purchases)
+    .where(eq(schema.purchases.id, purchaseId))
+    .get();
+}
+
+function getSeats(db: Db, purchaseId: number) {
+  return db
+    .select()
+    .from(schema.coupons)
+    .where(eq(schema.coupons.purchaseId, purchaseId))
+    .all();
+}
+
+function getCoupon(db: Db, couponId: number) {
+  return db
+    .select()
+    .from(schema.coupons)
+    .where(eq(schema.coupons.id, couponId))
+    .get();
+}
+
+function getEnrollment(db: Db, enrollmentId: number) {
+  return db
+    .select()
+    .from(schema.enrollments)
+    .where(eq(schema.enrollments.id, enrollmentId))
+    .get();
+}
+
+function getRefund(db: Db, refundId: number) {
+  return db
+    .select()
+    .from(schema.refunds)
+    .where(eq(schema.refunds.id, refundId))
+    .get();
+}
+
+function getTeamAdmin(db: Db, teamId: number) {
+  const membership = db
+    .select()
+    .from(schema.teamMembers)
+    .where(
+      and(
+        eq(schema.teamMembers.teamId, teamId),
+        eq(schema.teamMembers.role, schema.TeamMemberRole.Admin)
+      )
+    )
+    .get();
+
+  if (!membership) return undefined;
+
+  return getUser(db, membership.userId);
+}
+
+// There is no column saying which kind a Purchase is: a Team Licence is the
+// Purchase that granted Seats, and every Team Licence grants at least one.
+type PurchaseKind = "individual_purchase" | "team_licence";
+
+function kindOf(seats: { id: number }[]): PurchaseKind {
+  return seats.length > 0 ? "team_licence" : "individual_purchase";
+}
+
 function recipientOf(user: typeof schema.users.$inferSelect): KnockRecipient {
   return {
     id: knockUserId(user.id),
@@ -225,6 +298,167 @@ export async function notifyDiscussionReplyPosted(
       lessonId: lesson.id,
       lessonTitle: lesson.title,
       replyBody: reply.body,
+    },
+  });
+}
+
+export const PURCHASE_FINALIZED_WORKFLOW = "purchase-finalized";
+
+export async function notifyPurchaseFinalized(
+  db: Db,
+  input: { purchaseId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const purchase = getPurchase(db, input.purchaseId);
+  if (!purchase) return;
+
+  const course = getCourse(db, purchase.courseId);
+  const buyer = getUser(db, purchase.userId);
+  if (!course || !buyer) return;
+
+  const seats = getSeats(db, purchase.id);
+  const kind = kindOf(seats);
+
+  // The sole didn't-initiate exception: the buyer's own click is what
+  // finalizes the Purchase, and the confirmation is still worth sending.
+  await deliver(knock, PURCHASE_FINALIZED_WORKFLOW, {
+    recipients: [recipientOf(buyer)],
+    data: {
+      courseTitle: course.title,
+      courseSlug: course.slug,
+      amountPaid: purchase.amountPaid,
+      kind,
+      ...(kind === "team_licence" ? { teamUrl: "/team" } : {}),
+    },
+  });
+}
+
+export const SEAT_CLAIMED_WORKFLOW = "seat-claimed";
+
+export async function notifySeatClaimed(
+  db: Db,
+  input: { couponId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const coupon = getCoupon(db, input.couponId);
+  if (!coupon || coupon.redeemedByUserId === null) return;
+
+  const admin = getTeamAdmin(db, coupon.teamId);
+  if (!admin) return;
+
+  // A Notification announces an action the recipient didn't initiate —
+  // the Team Admin claiming a Seat on their own Licence is no news.
+  if (admin.id === coupon.redeemedByUserId) return;
+
+  const claimer = getUser(db, coupon.redeemedByUserId);
+  const course = getCourse(db, coupon.courseId);
+  if (!claimer || !course) return;
+
+  await deliver(knock, SEAT_CLAIMED_WORKFLOW, {
+    recipients: [recipientOf(admin)],
+    data: {
+      claimerName: claimer.name,
+      courseTitle: course.title,
+      courseSlug: course.slug,
+      teamUrl: "/team",
+    },
+  });
+}
+
+export const REFUND_REQUEST_FILED_WORKFLOW = "refund-request-filed";
+
+export async function notifyRefundRequestFiled(
+  db: Db,
+  input: { refundId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const refund = getRefund(db, input.refundId);
+  if (!refund) return;
+
+  const purchase = getPurchase(db, refund.purchaseId);
+  if (!purchase) return;
+
+  const course = getCourse(db, purchase.courseId);
+  const buyer = getUser(db, purchase.userId);
+  if (!course || !buyer) return;
+
+  const admins = db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.role, schema.UserRole.Admin))
+    .all();
+
+  if (admins.length === 0) return;
+
+  await deliver(knock, REFUND_REQUEST_FILED_WORKFLOW, {
+    recipients: admins.map(recipientOf),
+    data: {
+      buyerName: buyer.name,
+      courseTitle: course.title,
+      courseSlug: course.slug,
+      reason: refund.reason,
+      adminUrl: "/admin/refunds",
+    },
+  });
+}
+
+export const NEW_ENROLLMENT_WORKFLOW = "new-enrollment";
+
+export async function notifyNewEnrollment(
+  db: Db,
+  input: { enrollmentId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const enrollment = getEnrollment(db, input.enrollmentId);
+  if (!enrollment) return;
+
+  const course = getCourse(db, enrollment.courseId);
+  if (!course) return;
+
+  // A Notification announces an action the recipient didn't initiate —
+  // the Instructor enrolling in their own course is no news.
+  if (course.instructorId === enrollment.userId) return;
+
+  const instructor = getUser(db, course.instructorId);
+  const student = getUser(db, enrollment.userId);
+  if (!instructor || !student) return;
+
+  await deliver(knock, NEW_ENROLLMENT_WORKFLOW, {
+    recipients: [recipientOf(instructor)],
+    data: {
+      studentName: student.name,
+      courseTitle: course.title,
+      courseSlug: course.slug,
+    },
+  });
+}
+
+export const REFUND_REQUEST_DECIDED_WORKFLOW = "refund-request-decided";
+
+export async function notifyRefundRequestDecided(
+  db: Db,
+  input: { refundId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const refund = getRefund(db, input.refundId);
+  if (!refund || refund.status === schema.RefundStatus.Open) return;
+
+  const purchase = getPurchase(db, refund.purchaseId);
+  if (!purchase) return;
+
+  const course = getCourse(db, purchase.courseId);
+  const buyer = getUser(db, purchase.userId);
+  if (!course || !buyer) return;
+
+  const decision =
+    refund.status === schema.RefundStatus.Approved ? "approved" : "declined";
+
+  await deliver(knock, REFUND_REQUEST_DECIDED_WORKFLOW, {
+    recipients: [recipientOf(buyer)],
+    data: {
+      decision,
+      courseTitle: course.title,
+      courseSlug: course.slug,
     },
   });
 }

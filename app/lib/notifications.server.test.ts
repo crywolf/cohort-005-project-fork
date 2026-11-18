@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import {
@@ -7,6 +8,11 @@ import {
   knockUserId,
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
+  notifyNewEnrollment,
+  notifyPurchaseFinalized,
+  notifyRefundRequestDecided,
+  notifyRefundRequestFiled,
+  notifySeatClaimed,
   recordingKnockClient,
   signKnockUserToken,
   type KnockClient,
@@ -55,6 +61,83 @@ function seedReply(replierId: number, questionId: number, body = "Practice slowl
   return db
     .insert(schema.comments)
     .values({ userId: replierId, lessonId, parentId: questionId, body })
+    .returning()
+    .get();
+}
+
+function seedPurchase(userId: number, courseId: number, amountPaid = 4900) {
+  return db
+    .insert(schema.purchases)
+    .values({ userId, courseId, amountPaid, country: "US" })
+    .returning()
+    .get();
+}
+
+function seedTeamLicence(buyerId: number, courseId: number, seats: number) {
+  const purchase = seedPurchase(buyerId, courseId);
+  const team = db.insert(schema.teams).values({}).returning().get();
+  db.insert(schema.teamMembers)
+    .values({ teamId: team.id, userId: buyerId, role: schema.TeamMemberRole.Admin })
+    .returning()
+    .get();
+  const coupons: (typeof schema.coupons.$inferSelect)[] = [];
+  for (let i = 0; i < seats; i++) {
+    coupons.push(
+      db.insert(schema.coupons)
+        .values({
+          teamId: team.id,
+          courseId,
+          code: `code-${purchase.id}-${i}`,
+          purchaseId: purchase.id,
+        })
+        .returning()
+        .get()
+    );
+  }
+  return { purchase, team, coupons };
+}
+
+function claimSeat(couponId: number, userId: number) {
+  return db
+    .update(schema.coupons)
+    .set({ redeemedByUserId: userId, redeemedAt: new Date().toISOString() })
+    .where(eq(schema.coupons.id, couponId))
+    .returning()
+    .get();
+}
+
+function seedMember(name: string, email: string) {
+  return db
+    .insert(schema.users)
+    .values({ name, email, role: schema.UserRole.Student })
+    .returning()
+    .get();
+}
+
+function seedAdmin(name: string, email: string) {
+  return db
+    .insert(schema.users)
+    .values({ name, email, role: schema.UserRole.Admin })
+    .returning()
+    .get();
+}
+
+function seedEnrollment(userId: number, courseId: number) {
+  return db
+    .insert(schema.enrollments)
+    .values({ userId, courseId })
+    .returning()
+    .get();
+}
+
+function seedRefundRequest(
+  purchaseId: number,
+  reason = "Changed my mind",
+  status: schema.RefundStatus = schema.RefundStatus.Open
+) {
+  return db
+    .insert(schema.refunds)
+    .values({ purchaseId, reason, status })
     .returning()
     .get();
 }
@@ -255,6 +338,300 @@ describe("notifyNewDiscussionQuestionPosted", () => {
     );
 
     expect(calls).toEqual([]);
+  });
+});
+
+describe("notifyPurchaseFinalized", () => {
+  it("notifies the buyer when an Individual Purchase finalizes", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+
+    await notifyPurchaseFinalized(db, { purchaseId: purchase.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("purchase-finalized");
+    // Inline identification of the buyer. The sole didn't-initiate
+    // exception: the buyer's own click is what finalizes the Purchase.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      amountPaid: 4900,
+      kind: "individual_purchase",
+    });
+  });
+
+  it("notifies the Team Admin — the buyer — when a Team Licence finalizes", async () => {
+    const { client, calls } = recordingKnockClient();
+    const licence = seedTeamLicence(base.user.id, base.course.id, 5);
+
+    await notifyPurchaseFinalized(db, { purchaseId: licence.purchase.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    // The Team Admin is the buyer, never a Seat holder — no Seat has been
+    // claimed yet at the moment of purchase.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      kind: "team_licence",
+      teamUrl: "/team",
+    });
+  });
+
+  it("a Knock outage never fails the purchase", async () => {
+    const purchase = seedPurchase(base.user.id, base.course.id);
+
+    await expect(
+      notifyPurchaseFinalized(db, { purchaseId: purchase.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifySeatClaimed", () => {
+  it("notifies the Team Admin when a Seat on their Team Licence is claimed", async () => {
+    const { client, calls } = recordingKnockClient();
+    const licence = seedTeamLicence(base.user.id, base.course.id, 3);
+    const member = seedMember("Team Member", "member@example.com");
+    const coupon = claimSeat(licence.coupons[0]!.id, member.id);
+
+    await notifySeatClaimed(db, { couponId: coupon.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("seat-claimed");
+    // Inline identification of the Team Admin, never the Seat claimer.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      claimerName: member.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      teamUrl: "/team",
+    });
+  });
+
+  it("never notifies the Team Admin about their own seat claim", async () => {
+    const { client, calls } = recordingKnockClient();
+    const licence = seedTeamLicence(base.user.id, base.course.id, 3);
+    const coupon = claimSeat(licence.coupons[0]!.id, base.user.id);
+
+    await notifySeatClaimed(db, { couponId: coupon.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("a Knock outage never fails the seat claim", async () => {
+    const licence = seedTeamLicence(base.user.id, base.course.id, 3);
+    const member = seedMember("Team Member", "member@example.com");
+    const coupon = claimSeat(licence.coupons[0]!.id, member.id);
+
+    await expect(
+      notifySeatClaimed(db, { couponId: coupon.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyRefundRequestFiled", () => {
+  it("notifies all Platform Admins when a Refund Request is filed", async () => {
+    const { client, calls } = recordingKnockClient();
+    const adminOne = seedAdmin("Admin One", "admin1@example.com");
+    const adminTwo = seedAdmin("Admin Two", "admin2@example.com");
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(purchase.id);
+
+    await notifyRefundRequestFiled(db, { refundId: refund.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("refund-request-filed");
+    // Every Platform Admin, inline identified.
+    expect(call.recipients).toEqual(
+      expect.arrayContaining([
+        {
+          id: knockUserId(adminOne.id),
+          name: adminOne.name,
+          email: adminOne.email,
+          avatar: null,
+        },
+        {
+          id: knockUserId(adminTwo.id),
+          name: adminTwo.name,
+          email: adminTwo.email,
+          avatar: null,
+        },
+      ])
+    );
+    expect(call.data).toMatchObject({
+      buyerName: base.user.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      reason: "Changed my mind",
+      adminUrl: "/admin/refunds",
+    });
+  });
+
+  it("a Knock outage never fails the refund request", async () => {
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(purchase.id);
+
+    await expect(
+      notifyRefundRequestFiled(db, { refundId: refund.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyRefundRequestDecided", () => {
+  it("notifies the buyer when a Refund Request is approved", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(
+      purchase.id,
+      "Changed my mind",
+      schema.RefundStatus.Approved
+    );
+
+    await notifyRefundRequestDecided(db, { refundId: refund.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("refund-request-decided");
+    // Inline identification of the buyer.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      decision: "approved",
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+    });
+  });
+
+  it("notifies the buyer when a Refund Request is declined", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(
+      purchase.id,
+      "Changed my mind",
+      schema.RefundStatus.Declined
+    );
+
+    await notifyRefundRequestDecided(db, { refundId: refund.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.data).toMatchObject({
+      decision: "declined",
+    });
+  });
+
+  it("sends nothing while the Refund Request is still open", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(purchase.id);
+
+    await notifyRefundRequestDecided(db, { refundId: refund.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("a Knock outage never fails the refund decision", async () => {
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(
+      purchase.id,
+      "Changed my mind",
+      schema.RefundStatus.Approved
+    );
+
+    await expect(
+      notifyRefundRequestDecided(
+        db,
+        { refundId: refund.id },
+        failingKnockClient()
+      )
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyNewEnrollment", () => {
+  it("notifies the course's Instructor when a new Enrollment happens", async () => {
+    const { client, calls } = recordingKnockClient();
+    const enrollment = seedEnrollment(base.user.id, base.course.id);
+
+    await notifyNewEnrollment(db, { enrollmentId: enrollment.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("new-enrollment");
+    // Inline identification of the course's Instructor, never the student.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.instructor.id),
+        name: base.instructor.name,
+        email: base.instructor.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      studentName: base.user.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+    });
+  });
+
+  it("never notifies the Instructor about their own enrollment", async () => {
+    const { client, calls } = recordingKnockClient();
+    const enrollment = seedEnrollment(base.instructor.id, base.course.id);
+
+    await notifyNewEnrollment(db, { enrollmentId: enrollment.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("a Knock outage never fails the enrollment", async () => {
+    const enrollment = seedEnrollment(base.user.id, base.course.id);
+
+    await expect(
+      notifyNewEnrollment(
+        db,
+        { enrollmentId: enrollment.id },
+        failingKnockClient()
+      )
+    ).resolves.toBeUndefined();
   });
 });
 
