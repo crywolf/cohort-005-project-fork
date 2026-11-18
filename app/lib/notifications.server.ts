@@ -203,6 +203,14 @@ function getCoupon(db: Db, couponId: number) {
     .get();
 }
 
+function getRefund(db: Db, refundId: number) {
+  return db
+    .select()
+    .from(schema.refunds)
+    .where(eq(schema.refunds.id, refundId))
+    .get();
+}
+
 function getTeamAdmin(db: Db, teamId: number) {
   const membership = db
     .select()
@@ -345,6 +353,43 @@ export async function notifySeatClaimed(
       courseTitle: course.title,
       courseSlug: course.slug,
       teamUrl: "/team",
+    },
+  });
+}
+
+export const REFUND_REQUEST_FILED_WORKFLOW = "refund-request-filed";
+
+export async function notifyRefundRequestFiled(
+  db: Db,
+  input: { refundId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const refund = getRefund(db, input.refundId);
+  if (!refund) return;
+
+  const purchase = getPurchase(db, refund.purchaseId);
+  if (!purchase) return;
+
+  const course = getCourse(db, purchase.courseId);
+  const buyer = getUser(db, purchase.userId);
+  if (!course || !buyer) return;
+
+  const admins = db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.role, schema.UserRole.Admin))
+    .all();
+
+  if (admins.length === 0) return;
+
+  await deliver(knock, REFUND_REQUEST_FILED_WORKFLOW, {
+    recipients: admins.map(recipientOf),
+    data: {
+      buyerName: buyer.name,
+      courseTitle: course.title,
+      courseSlug: course.slug,
+      reason: refund.reason,
+      adminUrl: "/admin/refunds",
     },
   });
 }

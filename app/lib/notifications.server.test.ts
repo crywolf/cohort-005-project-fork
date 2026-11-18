@@ -9,6 +9,7 @@ import {
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
   notifyPurchaseFinalized,
+  notifyRefundRequestFiled,
   notifySeatClaimed,
   recordingKnockClient,
   signKnockUserToken,
@@ -107,6 +108,22 @@ function seedMember(name: string, email: string) {
   return db
     .insert(schema.users)
     .values({ name, email, role: schema.UserRole.Student })
+    .returning()
+    .get();
+}
+
+function seedAdmin(name: string, email: string) {
+  return db
+    .insert(schema.users)
+    .values({ name, email, role: schema.UserRole.Admin })
+    .returning()
+    .get();
+}
+
+function seedRefundRequest(purchaseId: number, reason = "Changed my mind") {
+  return db
+    .insert(schema.refunds)
+    .values({ purchaseId, reason })
     .returning()
     .get();
 }
@@ -422,6 +439,56 @@ describe("notifySeatClaimed", () => {
 
     await expect(
       notifySeatClaimed(db, { couponId: coupon.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyRefundRequestFiled", () => {
+  it("notifies all Platform Admins when a Refund Request is filed", async () => {
+    const { client, calls } = recordingKnockClient();
+    const adminOne = seedAdmin("Admin One", "admin1@example.com");
+    const adminTwo = seedAdmin("Admin Two", "admin2@example.com");
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(purchase.id);
+
+    await notifyRefundRequestFiled(db, { refundId: refund.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("refund-request-filed");
+    // Every Platform Admin, inline identified.
+    expect(call.recipients).toEqual(
+      expect.arrayContaining([
+        {
+          id: knockUserId(adminOne.id),
+          name: adminOne.name,
+          email: adminOne.email,
+          avatar: null,
+        },
+        {
+          id: knockUserId(adminTwo.id),
+          name: adminTwo.name,
+          email: adminTwo.email,
+          avatar: null,
+        },
+      ])
+    );
+    expect(call.data).toMatchObject({
+      buyerName: base.user.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      reason: "Changed my mind",
+      adminUrl: "/admin/refunds",
+    });
+  });
+
+  it("a Knock outage never fails the refund request", async () => {
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(purchase.id);
+
+    await expect(
+      notifyRefundRequestFiled(db, { refundId: refund.id }, failingKnockClient())
     ).resolves.toBeUndefined();
   });
 });
