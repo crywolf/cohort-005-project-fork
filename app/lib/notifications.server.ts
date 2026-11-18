@@ -203,6 +203,14 @@ function getCoupon(db: Db, couponId: number) {
     .get();
 }
 
+function getEnrollment(db: Db, enrollmentId: number) {
+  return db
+    .select()
+    .from(schema.enrollments)
+    .where(eq(schema.enrollments.id, enrollmentId))
+    .get();
+}
+
 function getRefund(db: Db, refundId: number) {
   return db
     .select()
@@ -390,6 +398,37 @@ export async function notifyRefundRequestFiled(
       courseSlug: course.slug,
       reason: refund.reason,
       adminUrl: "/admin/refunds",
+    },
+  });
+}
+
+export const NEW_ENROLLMENT_WORKFLOW = "new-enrollment";
+
+export async function notifyNewEnrollment(
+  db: Db,
+  input: { enrollmentId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const enrollment = getEnrollment(db, input.enrollmentId);
+  if (!enrollment) return;
+
+  const course = getCourse(db, enrollment.courseId);
+  if (!course) return;
+
+  // A Notification announces an action the recipient didn't initiate —
+  // the Instructor enrolling in their own course is no news.
+  if (course.instructorId === enrollment.userId) return;
+
+  const instructor = getUser(db, course.instructorId);
+  const student = getUser(db, enrollment.userId);
+  if (!instructor || !student) return;
+
+  await deliver(knock, NEW_ENROLLMENT_WORKFLOW, {
+    recipients: [recipientOf(instructor)],
+    data: {
+      studentName: student.name,
+      courseTitle: course.title,
+      courseSlug: course.slug,
     },
   });
 }

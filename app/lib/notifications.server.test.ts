@@ -8,6 +8,7 @@ import {
   knockUserId,
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
+  notifyNewEnrollment,
   notifyPurchaseFinalized,
   notifyRefundRequestDecided,
   notifyRefundRequestFiled,
@@ -117,6 +118,14 @@ function seedAdmin(name: string, email: string) {
   return db
     .insert(schema.users)
     .values({ name, email, role: schema.UserRole.Admin })
+    .returning()
+    .get();
+}
+
+function seedEnrollment(userId: number, courseId: number) {
+  return db
+    .insert(schema.enrollments)
+    .values({ userId, courseId })
     .returning()
     .get();
 }
@@ -571,6 +580,55 @@ describe("notifyRefundRequestDecided", () => {
       notifyRefundRequestDecided(
         db,
         { refundId: refund.id },
+        failingKnockClient()
+      )
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyNewEnrollment", () => {
+  it("notifies the course's Instructor when a new Enrollment happens", async () => {
+    const { client, calls } = recordingKnockClient();
+    const enrollment = seedEnrollment(base.user.id, base.course.id);
+
+    await notifyNewEnrollment(db, { enrollmentId: enrollment.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("new-enrollment");
+    // Inline identification of the course's Instructor, never the student.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.instructor.id),
+        name: base.instructor.name,
+        email: base.instructor.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      studentName: base.user.name,
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+    });
+  });
+
+  it("never notifies the Instructor about their own enrollment", async () => {
+    const { client, calls } = recordingKnockClient();
+    const enrollment = seedEnrollment(base.instructor.id, base.course.id);
+
+    await notifyNewEnrollment(db, { enrollmentId: enrollment.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("a Knock outage never fails the enrollment", async () => {
+    const enrollment = seedEnrollment(base.user.id, base.course.id);
+
+    await expect(
+      notifyNewEnrollment(
+        db,
+        { enrollmentId: enrollment.id },
         failingKnockClient()
       )
     ).resolves.toBeUndefined();
