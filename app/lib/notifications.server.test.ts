@@ -9,6 +9,7 @@ import {
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
   notifyPurchaseFinalized,
+  notifyRefundRequestDecided,
   notifyRefundRequestFiled,
   notifySeatClaimed,
   recordingKnockClient,
@@ -120,10 +121,14 @@ function seedAdmin(name: string, email: string) {
     .get();
 }
 
-function seedRefundRequest(purchaseId: number, reason = "Changed my mind") {
+function seedRefundRequest(
+  purchaseId: number,
+  reason = "Changed my mind",
+  status: schema.RefundStatus = schema.RefundStatus.Open
+) {
   return db
     .insert(schema.refunds)
-    .values({ purchaseId, reason })
+    .values({ purchaseId, reason, status })
     .returning()
     .get();
 }
@@ -489,6 +494,85 @@ describe("notifyRefundRequestFiled", () => {
 
     await expect(
       notifyRefundRequestFiled(db, { refundId: refund.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyRefundRequestDecided", () => {
+  it("notifies the buyer when a Refund Request is approved", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(
+      purchase.id,
+      "Changed my mind",
+      schema.RefundStatus.Approved
+    );
+
+    await notifyRefundRequestDecided(db, { refundId: refund.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("refund-request-decided");
+    // Inline identification of the buyer.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      decision: "approved",
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+    });
+  });
+
+  it("notifies the buyer when a Refund Request is declined", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(
+      purchase.id,
+      "Changed my mind",
+      schema.RefundStatus.Declined
+    );
+
+    await notifyRefundRequestDecided(db, { refundId: refund.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.data).toMatchObject({
+      decision: "declined",
+    });
+  });
+
+  it("sends nothing while the Refund Request is still open", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(purchase.id);
+
+    await notifyRefundRequestDecided(db, { refundId: refund.id }, client);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("a Knock outage never fails the refund decision", async () => {
+    const purchase = seedPurchase(base.user.id, base.course.id);
+    const refund = seedRefundRequest(
+      purchase.id,
+      "Changed my mind",
+      schema.RefundStatus.Approved
+    );
+
+    await expect(
+      notifyRefundRequestDecided(
+        db,
+        { refundId: refund.id },
+        failingKnockClient()
+      )
     ).resolves.toBeUndefined();
   });
 });

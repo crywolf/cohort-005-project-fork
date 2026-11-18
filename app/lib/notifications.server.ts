@@ -394,6 +394,36 @@ export async function notifyRefundRequestFiled(
   });
 }
 
+export const REFUND_REQUEST_DECIDED_WORKFLOW = "refund-request-decided";
+
+export async function notifyRefundRequestDecided(
+  db: Db,
+  input: { refundId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const refund = getRefund(db, input.refundId);
+  if (!refund || refund.status === schema.RefundStatus.Open) return;
+
+  const purchase = getPurchase(db, refund.purchaseId);
+  if (!purchase) return;
+
+  const course = getCourse(db, purchase.courseId);
+  const buyer = getUser(db, purchase.userId);
+  if (!course || !buyer) return;
+
+  const decision =
+    refund.status === schema.RefundStatus.Approved ? "approved" : "declined";
+
+  await deliver(knock, REFUND_REQUEST_DECIDED_WORKFLOW, {
+    recipients: [recipientOf(buyer)],
+    data: {
+      decision,
+      courseTitle: course.title,
+      courseSlug: course.slug,
+    },
+  });
+}
+
 export const NEW_DISCUSSION_QUESTION_WORKFLOW = "new-discussion-question";
 
 export async function notifyNewDiscussionQuestionPosted(
