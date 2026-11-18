@@ -50,6 +50,10 @@ import {
 } from "lucide-react";
 import { cn, formatDuration } from "~/lib/utils";
 import { renderMarkdown } from "~/lib/markdown.server";
+import {
+  notifyDiscussionReplyPosted,
+  notifyNewDiscussionQuestionPosted,
+} from "~/lib/notifications.server";
 import { YouTubePlayer } from "~/components/youtube-player";
 import { data, isRouteErrorResponse } from "react-router";
 import { z } from "zod";
@@ -900,12 +904,19 @@ export async function action({ params, request }: Route.ActionArgs) {
         if (!parsed.success) {
           return { ok: false, error: "Enter a comment before posting." };
         }
-        createComment(
+        const comment = createComment(
           currentUserId,
           lessonId,
           parsed.data.parentId ?? null,
           parsed.data.body
         );
+        // Notifications fire after the domain mutation commits, never in
+        // front of it; failures are logged and swallowed inside the module.
+        if (comment.parentId !== null) {
+          await notifyDiscussionReplyPosted(db, { commentId: comment.id });
+        } else {
+          await notifyNewDiscussionQuestionPosted(db, { commentId: comment.id });
+        }
         return { ok: true };
       }
 
