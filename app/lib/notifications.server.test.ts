@@ -5,6 +5,7 @@ import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import {
   defaultKnockClient,
+  defaultKnockPreferencesClient,
   knockUserId,
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
@@ -14,6 +15,7 @@ import {
   notifyRefundRequestFiled,
   notifySeatClaimed,
   recordingKnockClient,
+  recordingKnockPreferencesClient,
   signKnockUserToken,
   type KnockClient,
 } from "./notifications.server";
@@ -663,6 +665,61 @@ describe("delivery failures", () => {
         failingKnockClient()
       )
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("defaultKnockPreferencesClient", () => {
+  const previousApiKey = process.env.KNOCK_API_KEY;
+
+  afterEach(() => {
+    if (previousApiKey === undefined) delete process.env.KNOCK_API_KEY;
+    else process.env.KNOCK_API_KEY = previousApiKey;
+  });
+
+  it("is a no-op without KNOCK_API_KEY", async () => {
+    delete process.env.KNOCK_API_KEY;
+
+    const client = defaultKnockPreferencesClient();
+
+    await expect(client.getPreferenceSet("user-1")).resolves.toBeNull();
+    await expect(
+      client.updatePreferenceSet("user-1", { "discussion-activity": true })
+    ).resolves.toEqual({});
+  });
+});
+
+describe("recordingKnockPreferencesClient", () => {
+  it("starts with no recorded reads or updates", () => {
+    expect(recordingKnockPreferencesClient().reads).toEqual([]);
+    expect(recordingKnockPreferencesClient().updates).toEqual([]);
+  });
+
+  it("records preference set reads and returns the canned preference set", async () => {
+    const preferenceSet = {
+      categories: { "discussion-activity": { channel_types: { in_app_feed: false } } },
+    };
+    const { client, reads } = recordingKnockPreferencesClient({ preferenceSet });
+
+    await expect(client.getPreferenceSet("user-7")).resolves.toBe(preferenceSet);
+
+    expect(reads).toEqual(["user-7"]);
+  });
+
+  it("records preference set updates", async () => {
+    const { client, updates } = recordingKnockPreferencesClient();
+
+    await client.updatePreferenceSet("user-7", {
+      "purchases-refunds": { channel_types: { in_app_feed: false } },
+    });
+
+    expect(updates).toEqual([
+      {
+        userId: "user-7",
+        categories: {
+          "purchases-refunds": { channel_types: { in_app_feed: false } },
+        },
+      },
+    ]);
   });
 });
 

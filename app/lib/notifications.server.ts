@@ -127,6 +127,153 @@ export function defaultKnockClient(): KnockClient {
   return apiKey ? knockApiTransport(apiKey) : noopKnockClient();
 }
 
+// ─── Preference sets ───
+// Notification Preferences are stored only in Knock preference sets — there
+// is no local table. A separate injected client seam keeps the trigger seam
+// untouched: the settings route reads and writes the "default" preference
+// set of the signed-in person's Knock subscriber, category by category.
+// Off means never sent: Knock evaluates the preference set when it runs a
+// workflow, so a category that is off blocks every workflow in it.
+
+// The preference set whose id the dashboard provisions by default.
+export const DEFAULT_PREFERENCE_SET_ID = "default";
+
+// The in-app feed channel type in Knock's preference set schema.
+const IN_APP_FEED_CHANNEL_TYPE = "in_app_feed";
+
+export type KnockPreferenceSet = {
+  id?: string;
+  categories?:
+    | Record<
+        string,
+        boolean | { channel_types?: Record<string, boolean | object> }
+      >
+    | null;
+  channel_types?: Record<string, boolean | object> | null;
+};
+
+export interface KnockPreferencesClient {
+  getPreferenceSet(knockUserId: string): Promise<KnockPreferenceSet | null>;
+  updatePreferenceSet(
+    knockUserId: string,
+    categories: Record<string, unknown>
+  ): Promise<KnockPreferenceSet>;
+}
+
+export function knockPreferencesApiTransport(
+  apiKey: string
+): KnockPreferencesClient {
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+  };
+
+  return {
+    async getPreferenceSet(knockUserId) {
+      const response = await fetch(
+        `https://api.knock.app/v1/users/${knockUserId}/preferences/${DEFAULT_PREFERENCE_SET_ID}`,
+        { headers }
+      );
+
+      // A person who has never touched their preferences has nothing stored
+      // yet — the defaults apply.
+      if (response.status === 404) return null;
+
+      if (!response.ok) {
+        throw new Error(
+          `Knock rejected the preference set read for ${knockUserId}: ${response.status}`
+        );
+      }
+
+      return (await response.json()) as KnockPreferenceSet;
+    },
+
+    async updatePreferenceSet(knockUserId, categories) {
+      const response = await fetch(
+        `https://api.knock.app/v1/users/${knockUserId}/preferences/${DEFAULT_PREFERENCE_SET_ID}`,
+        {
+          method: "PUT",
+          headers,
+          // Merge, not replace: a toggle must not wipe preferences Knock
+          // holds that this screen knows nothing about.
+          body: JSON.stringify({
+            __persistence_strategy__: "merge",
+            categories,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Knock rejected the preference set update for ${knockUserId}: ${response.status}`
+        );
+      }
+
+      return (await response.json()) as KnockPreferenceSet;
+    },
+  };
+}
+
+export function noopKnockPreferencesClient(): KnockPreferencesClient {
+  return {
+    async getPreferenceSet() {
+      return null;
+    },
+    async updatePreferenceSet() {
+      return {};
+    },
+  };
+}
+
+export function defaultKnockPreferencesClient(): KnockPreferencesClient {
+  const apiKey = process.env.KNOCK_API_KEY;
+  return apiKey
+    ? knockPreferencesApiTransport(apiKey)
+    : noopKnockPreferencesClient();
+}
+
+// The fake behind the interface for tests: returns a canned preference set
+// from reads and records every update.
+export type RecordedPreferenceSetUpdate = {
+  userId: string;
+  categories: Record<string, unknown>;
+};
+
+export function recordingKnockPreferencesClient(
+  options: {
+    preferenceSet?: KnockPreferenceSet | null;
+    failReads?: boolean;
+    failUpdates?: boolean;
+  } = {}
+): {
+  client: KnockPreferencesClient;
+  reads: string[];
+  updates: RecordedPreferenceSetUpdate[];
+} {
+  const reads: string[] = [];
+  const updates: RecordedPreferenceSetUpdate[] = [];
+  return {
+    reads,
+    updates,
+    client: {
+      async getPreferenceSet(knockUserId) {
+        reads.push(knockUserId);
+        if (options.failReads) {
+          throw new Error("Knock is down");
+        }
+        return options.preferenceSet ?? null;
+      },
+      async updatePreferenceSet(knockUserId, categories) {
+        if (options.failUpdates) {
+          throw new Error("Knock is down");
+        }
+        updates.push({ userId: knockUserId, categories });
+        return {};
+      },
+    },
+  };
+}
+
 // ─── Triggers ───
 // One function per catalogue event. Each takes the database first and the
 // id of the domain row that produced the event, resolves the recipient's
