@@ -657,6 +657,8 @@ export async function notifyNewEnrollment(
     recipients: [recipientOf(instructor)],
     data: {
       studentName: student.name,
+      // Deep-link hint: the instructor students page is keyed by course id.
+      courseId: course.id,
       courseTitle: course.title,
       courseSlug: course.slug,
     },
@@ -719,6 +721,8 @@ export async function notifyNewDiscussionQuestionPosted(
     recipients: [recipientOf(instructor)],
     data: {
       authorName: author.name,
+      // Deep-link hint: the instructor lesson page is keyed by course id.
+      courseId: course.courseId,
       courseTitle: course.courseTitle,
       courseSlug: course.courseSlug,
       lessonId: lesson.id,

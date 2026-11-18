@@ -312,6 +312,7 @@ describe("notifyNewDiscussionQuestionPosted", () => {
     ]);
     expect(call.data).toMatchObject({
       authorName: base.user.name,
+      courseId: base.course.id,
       courseTitle: base.course.title,
       courseSlug: base.course.slug,
       lessonId,
@@ -615,6 +616,7 @@ describe("notifyNewEnrollment", () => {
     ]);
     expect(call.data).toMatchObject({
       studentName: base.user.name,
+      courseId: base.course.id,
       courseTitle: base.course.title,
       courseSlug: base.course.slug,
     });

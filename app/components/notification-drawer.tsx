@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { useNotificationStore } from "@knocklabs/react";
-import type { Feed, Recipient } from "@knocklabs/client";
+import type { Feed, FeedItem, Recipient } from "@knocklabs/client";
 import {
   Bell,
   MessageSquare,
@@ -12,8 +13,10 @@ import {
 } from "lucide-react";
 import {
   describeFeedItem,
+  destinationForFeedItem,
   relativeTime,
   type FeedItemActor,
+  type NotificationViewer,
 } from "~/lib/notification-display";
 import { UserAvatar } from "~/components/user-avatar";
 import { cn } from "~/lib/utils";
@@ -40,15 +43,29 @@ interface NotificationDrawerProps {
   open: boolean;
   onClose: () => void;
   feedClient: Feed;
+  viewer: NotificationViewer;
 }
 
 export function NotificationDrawer({
   open,
   onClose,
   feedClient,
+  viewer,
 }: NotificationDrawerProps) {
   const { items, metadata, pageInfo, loading } = useNotificationStore(feedClient);
   const [endReached, setEndReached] = useState(false);
+  const navigate = useNavigate();
+
+  function openItem(item: FeedItem) {
+    const destination = destinationForFeedItem(item, viewer);
+    if (!destination) return;
+    if (item.read_at === null) {
+      // Clicking a Notification marks it read as it navigates.
+      void feedClient.markAsRead(item);
+    }
+    onClose();
+    navigate(destination.path);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -126,14 +143,9 @@ export function NotificationDrawer({
                   actors: item.actors.map(actorOf),
                 });
                 const unread = item.read_at === null;
-                return (
-                  <li
-                    key={item.id}
-                    className={cn(
-                      "flex gap-3 px-4 py-3",
-                      unread && "bg-blue-50 dark:bg-blue-950/40"
-                    )}
-                  >
+                const clickable = destinationForFeedItem(item, viewer) !== null;
+                const row = (
+                  <>
                     <div className="shrink-0 pt-0.5">
                       {display.actorName ? (
                         <UserAvatar
@@ -174,6 +186,24 @@ export function NotificationDrawer({
                         {relativeTime(item.inserted_at)}
                       </p>
                     </div>
+                  </>
+                );
+                return (
+                  <li
+                    key={item.id}
+                    className={cn(unread && "bg-blue-50 dark:bg-blue-950/40")}
+                  >
+                    {clickable ? (
+                      <button
+                        type="button"
+                        onClick={() => openItem(item)}
+                        className="flex w-full gap-3 px-4 py-3 text-left hover:bg-muted/50"
+                      >
+                        {row}
+                      </button>
+                    ) : (
+                      <div className="flex gap-3 px-4 py-3">{row}</div>
+                    )}
                   </li>
                 );
               })}

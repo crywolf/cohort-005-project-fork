@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { describeFeedItem, formatBadgeCount, relativeTime } from "./notification-display";
+import { UserRole } from "~/db/schema";
+import {
+  describeFeedItem,
+  destinationForFeedItem,
+  formatBadgeCount,
+  relativeTime,
+  type NotificationViewer,
+} from "./notification-display";
+
+const studentViewer: NotificationViewer = {
+  role: UserRole.Student,
+  isTeamAdmin: false,
+};
+
+const instructorViewer: NotificationViewer = {
+  role: UserRole.Instructor,
+  isTeamAdmin: false,
+};
+
+const adminViewer: NotificationViewer = {
+  role: UserRole.Admin,
+  isTeamAdmin: false,
+};
+
+const teamAdminViewer: NotificationViewer = {
+  role: UserRole.Student,
+  isTeamAdmin: true,
+};
 
 describe("formatBadgeCount", () => {
   it("hides the badge when there are no unread notifications", () => {
@@ -110,5 +137,224 @@ describe("describeFeedItem", () => {
     expect(display.actorName).toBeNull();
     expect(display.eventLabel).toBe("Seat claimed");
     expect(display.contextLine).toBe("");
+  });
+});
+
+describe("destinationForFeedItem", () => {
+  it("maps a discussion reply to the lesson page", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "discussion-reply-posted" },
+        data: { courseSlug: "testing-with-vitest", lessonId: 7 },
+      },
+      studentViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/courses/testing-with-vitest/lessons/7",
+      requiredRole: null,
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("maps a finalized purchase to the course page, whoever clicks", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "purchase-finalized" },
+        data: { courseSlug: "testing-with-vitest", teamUrl: "/team" },
+      },
+      studentViewer,
+    );
+
+    // Even for a Team Licence the destination is the course page — the
+    // teamUrl hint is not the deep link the catalogue settled on.
+    expect(destination).toEqual({
+      path: "/courses/testing-with-vitest",
+      requiredRole: null,
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("maps a new discussion question to the instructor lesson page", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "new-discussion-question" },
+        data: {
+          courseId: 3,
+          courseSlug: "testing-with-vitest",
+          lessonId: 12,
+        },
+      },
+      instructorViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/instructor/3/lessons/12",
+      requiredRole: "instructor",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("maps a new enrollment to the instructor students page", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "new-enrollment" },
+        data: { courseId: 3, courseSlug: "testing-with-vitest" },
+      },
+      instructorViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/instructor/3/students",
+      requiredRole: "instructor",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("falls back to the course page when a student clicks an instructor event", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "new-enrollment" },
+        data: { courseId: 3, courseSlug: "testing-with-vitest" },
+      },
+      studentViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/courses/testing-with-vitest",
+      requiredRole: "instructor",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("lets a platform admin through instructor-only destinations", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "new-discussion-question" },
+        data: { courseId: 3, courseSlug: "testing-with-vitest", lessonId: 12 },
+      },
+      adminViewer,
+    );
+
+    expect(destination?.path).toBe("/instructor/3/lessons/12");
+  });
+
+  it("maps a claimed seat to the team page for the Team Admin", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "seat-claimed" },
+        data: { courseSlug: "testing-with-vitest", teamUrl: "/team" },
+      },
+      teamAdminViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/team",
+      requiredRole: "team-admin",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("falls back to the course page when an instructor clicks a team notification", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "seat-claimed" },
+        data: { courseSlug: "testing-with-vitest", teamUrl: "/team" },
+      },
+      instructorViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/courses/testing-with-vitest",
+      requiredRole: "team-admin",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("falls back to the course page when a platform admin without a team clicks a seat claim", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "seat-claimed" },
+        data: { courseSlug: "testing-with-vitest", teamUrl: "/team" },
+      },
+      adminViewer,
+    );
+
+    expect(destination?.path).toBe("/courses/testing-with-vitest");
+  });
+
+  it("maps a filed refund request to the admin refund queue for platform admins", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "refund-request-filed" },
+        data: { courseSlug: "testing-with-vitest", adminUrl: "/admin/refunds" },
+      },
+      adminViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/admin/refunds",
+      requiredRole: "admin",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("falls back to the course page when a non-admin clicks a filed refund request", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "refund-request-filed" },
+        data: { courseSlug: "testing-with-vitest", adminUrl: "/admin/refunds" },
+      },
+      instructorViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/courses/testing-with-vitest",
+      requiredRole: "admin",
+      fallbackPath: "/courses/testing-with-vitest",
+    });
+  });
+
+  it("returns null for an unknown workflow key, so the row is not clickable", () => {
+    const destination = destinationForFeedItem(
+      { source: { key: "not-in-the-catalogue" }, data: { courseSlug: "x" } },
+      studentViewer,
+    );
+
+    expect(destination).toBeNull();
+  });
+
+  it("falls back to the course page when a discussion reply lacks its lesson id", () => {
+    const destination = destinationForFeedItem(
+      { source: { key: "discussion-reply-posted" }, data: { courseSlug: "testing-with-vitest" } },
+      studentViewer,
+    );
+
+    expect(destination?.path).toBe("/courses/testing-with-vitest");
+  });
+
+  it("falls back to the home page when no course slug is in the payload", () => {
+    const destination = destinationForFeedItem(
+      { source: { key: "seat-claimed" }, data: {} },
+      teamAdminViewer,
+    );
+
+    expect(destination?.fallbackPath).toBe("/");
+  });
+
+  it("maps a refund decision to the course page, whoever clicks", () => {
+    const destination = destinationForFeedItem(
+      {
+        source: { key: "refund-request-decided" },
+        data: { courseSlug: "testing-with-vitest", decision: "approved" },
+      },
+      studentViewer,
+    );
+
+    expect(destination).toEqual({
+      path: "/courses/testing-with-vitest",
+      requiredRole: null,
+      fallbackPath: "/courses/testing-with-vitest",
+    });
   });
 });
