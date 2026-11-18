@@ -171,6 +171,38 @@ function getLesson(db: Db, lessonId: number) {
     .get();
 }
 
+function getCourse(db: Db, courseId: number) {
+  return db
+    .select()
+    .from(schema.courses)
+    .where(eq(schema.courses.id, courseId))
+    .get();
+}
+
+function getPurchase(db: Db, purchaseId: number) {
+  return db
+    .select()
+    .from(schema.purchases)
+    .where(eq(schema.purchases.id, purchaseId))
+    .get();
+}
+
+function getSeats(db: Db, purchaseId: number) {
+  return db
+    .select()
+    .from(schema.coupons)
+    .where(eq(schema.coupons.purchaseId, purchaseId))
+    .all();
+}
+
+// There is no column saying which kind a Purchase is: a Team Licence is the
+// Purchase that granted Seats, and every Team Licence grants at least one.
+type PurchaseKind = "individual_purchase" | "team_licence";
+
+function kindOf(seats: { id: number }[]): PurchaseKind {
+  return seats.length > 0 ? "team_licence" : "individual_purchase";
+}
+
 function recipientOf(user: typeof schema.users.$inferSelect): KnockRecipient {
   return {
     id: knockUserId(user.id),
@@ -225,6 +257,37 @@ export async function notifyDiscussionReplyPosted(
       lessonId: lesson.id,
       lessonTitle: lesson.title,
       replyBody: reply.body,
+    },
+  });
+}
+
+export const PURCHASE_FINALIZED_WORKFLOW = "purchase-finalized";
+
+export async function notifyPurchaseFinalized(
+  db: Db,
+  input: { purchaseId: number },
+  knock: KnockClient = defaultKnockClient()
+): Promise<void> {
+  const purchase = getPurchase(db, input.purchaseId);
+  if (!purchase) return;
+
+  const course = getCourse(db, purchase.courseId);
+  const buyer = getUser(db, purchase.userId);
+  if (!course || !buyer) return;
+
+  const seats = getSeats(db, purchase.id);
+  const kind = kindOf(seats);
+
+  // The sole didn't-initiate exception: the buyer's own click is what
+  // finalizes the Purchase, and the confirmation is still worth sending.
+  await deliver(knock, PURCHASE_FINALIZED_WORKFLOW, {
+    recipients: [recipientOf(buyer)],
+    data: {
+      courseTitle: course.title,
+      courseSlug: course.slug,
+      amountPaid: purchase.amountPaid,
+      kind,
+      ...(kind === "team_licence" ? { teamUrl: "/team" } : {}),
     },
   });
 }

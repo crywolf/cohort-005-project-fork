@@ -7,6 +7,7 @@ import {
   knockUserId,
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
+  notifyPurchaseFinalized,
   recordingKnockClient,
   signKnockUserToken,
   type KnockClient,
@@ -57,6 +58,35 @@ function seedReply(replierId: number, questionId: number, body = "Practice slowl
     .values({ userId: replierId, lessonId, parentId: questionId, body })
     .returning()
     .get();
+}
+
+function seedPurchase(userId: number, courseId: number, amountPaid = 4900) {
+  return db
+    .insert(schema.purchases)
+    .values({ userId, courseId, amountPaid, country: "US" })
+    .returning()
+    .get();
+}
+
+function seedTeamLicence(buyerId: number, courseId: number, seats: number) {
+  const purchase = seedPurchase(buyerId, courseId);
+  const team = db.insert(schema.teams).values({}).returning().get();
+  db.insert(schema.teamMembers)
+    .values({ teamId: team.id, userId: buyerId, role: schema.TeamMemberRole.Admin })
+    .returning()
+    .get();
+  for (let i = 0; i < seats; i++) {
+    db.insert(schema.coupons)
+      .values({
+        teamId: team.id,
+        courseId,
+        code: `code-${purchase.id}-${i}`,
+        purchaseId: purchase.id,
+      })
+      .returning()
+      .get();
+  }
+  return purchase;
 }
 
 describe("knockUserId", () => {
@@ -255,6 +285,71 @@ describe("notifyNewDiscussionQuestionPosted", () => {
     );
 
     expect(calls).toEqual([]);
+  });
+});
+
+describe("notifyPurchaseFinalized", () => {
+  it("notifies the buyer when an Individual Purchase finalizes", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedPurchase(base.user.id, base.course.id);
+
+    await notifyPurchaseFinalized(db, { purchaseId: purchase.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    expect(call.workflowKey).toBe("purchase-finalized");
+    // Inline identification of the buyer. The sole didn't-initiate
+    // exception: the buyer's own click is what finalizes the Purchase.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      amountPaid: 4900,
+      kind: "individual_purchase",
+    });
+  });
+
+  it("notifies the Team Admin — the buyer — when a Team Licence finalizes", async () => {
+    const { client, calls } = recordingKnockClient();
+    const purchase = seedTeamLicence(base.user.id, base.course.id, 5);
+
+    await notifyPurchaseFinalized(db, { purchaseId: purchase.id }, client);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error("no trigger recorded");
+    // The Team Admin is the buyer, never a Seat holder — no Seat has been
+    // claimed yet at the moment of purchase.
+    expect(call.recipients).toEqual([
+      {
+        id: knockUserId(base.user.id),
+        name: base.user.name,
+        email: base.user.email,
+        avatar: null,
+      },
+    ]);
+    expect(call.data).toMatchObject({
+      courseTitle: base.course.title,
+      courseSlug: base.course.slug,
+      kind: "team_licence",
+      teamUrl: "/team",
+    });
+  });
+
+  it("a Knock outage never fails the purchase", async () => {
+    const purchase = seedPurchase(base.user.id, base.course.id);
+
+    await expect(
+      notifyPurchaseFinalized(db, { purchaseId: purchase.id }, failingKnockClient())
+    ).resolves.toBeUndefined();
   });
 });
 
