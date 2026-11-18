@@ -19,6 +19,7 @@ import {
   notifySeatClaimed,
   readInAppNotificationPreferences,
   recordingKnockClient,
+  writeInAppNotificationPreference,
   recordingKnockPreferencesClient,
   signKnockUserToken,
   type KnockClient,
@@ -798,6 +799,70 @@ describe("readInAppNotificationPreferences", () => {
       [PURCHASES_REFUNDS_CATEGORY]: true,
       [NEW_STUDENTS_CATEGORY]: true,
     });
+
+    consoleError.mockRestore();
+  });
+});
+
+describe("writeInAppNotificationPreference", () => {
+  it("writes the category's in-app feed channel type to the person's preference set", async () => {
+    const { client, updates } = recordingKnockPreferencesClient();
+
+    await expect(
+      writeInAppNotificationPreference(
+        base.user.id,
+        DISCUSSION_ACTIVITY_CATEGORY,
+        false,
+        client
+      )
+    ).resolves.toBe(true);
+
+    expect(updates).toEqual([
+      {
+        userId: knockUserId(base.user.id),
+        categories: {
+          [DISCUSSION_ACTIVITY_CATEGORY]: {
+            channel_types: { in_app_feed: false },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("writes a category switched back on", async () => {
+    const { client, updates } = recordingKnockPreferencesClient();
+
+    await expect(
+      writeInAppNotificationPreference(
+        base.user.id,
+        NEW_STUDENTS_CATEGORY,
+        true,
+        client
+      )
+    ).resolves.toBe(true);
+
+    expect(updates).toEqual([
+      {
+        userId: knockUserId(base.user.id),
+        categories: {
+          [NEW_STUDENTS_CATEGORY]: { channel_types: { in_app_feed: true } },
+        },
+      },
+    ]);
+  });
+
+  it("survives a Knock outage without throwing", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { client } = recordingKnockPreferencesClient({ failUpdates: true });
+
+    await expect(
+      writeInAppNotificationPreference(
+        base.user.id,
+        PURCHASES_REFUNDS_CATEGORY,
+        false,
+        client
+      )
+    ).resolves.toBe(false);
 
     consoleError.mockRestore();
   });

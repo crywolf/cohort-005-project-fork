@@ -298,6 +298,30 @@ export async function readInAppNotificationPreferences(
   }
 }
 
+// Persist one toggle: the category's in-app feed channel type in the
+// person's Knock preference set. Returns false (instead of throwing) when
+// Knock is unreachable so the settings action can show an error without
+// crashing the page.
+export async function writeInAppNotificationPreference(
+  userId: number,
+  categoryKey: NotificationCategoryKey,
+  enabled: boolean,
+  knock: KnockPreferencesClient = defaultKnockPreferencesClient()
+): Promise<boolean> {
+  try {
+    await knock.updatePreferenceSet(knockUserId(userId), {
+      [categoryKey]: { channel_types: { [IN_APP_FEED_CHANNEL_TYPE]: enabled } },
+    });
+    return true;
+  } catch (error) {
+    console.error(
+      `Knock preference set update for ${knockUserId(userId)} failed:`,
+      error
+    );
+    return false;
+  }
+}
+
 export function recordingKnockPreferencesClient(
   options: {
     preferenceSet?: KnockPreferenceSet | null;
