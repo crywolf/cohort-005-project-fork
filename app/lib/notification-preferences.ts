@@ -22,22 +22,23 @@ export const NOTIFICATION_CATEGORIES = [
 
 export type NotificationCategoryKey = (typeof NOTIFICATION_CATEGORIES)[number];
 
-// The Categories the settings card shows a person, at their roles: the
-// app-level role plus whether they administer a Team. A Team Admin receives
-// seat-claimed and licence-purchase notifications even when their app-level
-// role is Student or Instructor, so they get the Purchases & refunds toggle
-// too. Platform Admins get no toggles — the refund-queue alert is always on
-// and not a preference.
+// The Categories the settings card shows a person, at their role. A category
+// shows only when one of its catalogue events can fire at that person:
+// Discussion activity reaches everyone but a Platform Admin; Purchases &
+// refunds reaches everyone who can be a buyer — any non-Admin role, since the
+// purchase route doesn't gate by role (an Instructor who buys a course is the
+// Purchase-finalized recipient too). New students is Instructor-only.
+// Platform Admins get no toggles — the refund-queue alert is always on and
+// not a preference.
 export function relevantNotificationCategories(
-  role: UserRole,
-  isTeamAdmin: boolean
+  role: UserRole
 ): NotificationCategoryKey[] {
   if (role === UserRole.Admin) return [];
 
-  const categories: NotificationCategoryKey[] = [DISCUSSION_ACTIVITY_CATEGORY];
+  const categories: NotificationCategoryKey[] = [
+    DISCUSSION_ACTIVITY_CATEGORY,
+    PURCHASES_REFUNDS_CATEGORY,
+  ];
   if (role === UserRole.Instructor) categories.push(NEW_STUDENTS_CATEGORY);
-  if (role === UserRole.Student || isTeamAdmin) {
-    categories.push(PURCHASES_REFUNDS_CATEGORY);
-  }
   return categories;
 }

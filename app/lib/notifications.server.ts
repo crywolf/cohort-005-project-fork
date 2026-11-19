@@ -486,11 +486,11 @@ function getSeats(db: Db, purchaseId: number) {
     .all();
 }
 
-function getCoupon(db: Db, couponId: number) {
+function getSeat(db: Db, seatId: number) {
   return db
     .select()
     .from(schema.coupons)
-    .where(eq(schema.coupons.id, couponId))
+    .where(eq(schema.coupons.id, seatId))
     .get();
 }
 
@@ -625,21 +625,21 @@ export async function notifyPurchaseFinalized(
 
 export async function notifySeatClaimed(
   db: Db,
-  input: { couponId: number },
+  input: { seatId: number },
   knock: KnockClient = defaultKnockClient()
 ): Promise<void> {
-  const coupon = getCoupon(db, input.couponId);
-  if (!coupon || coupon.redeemedByUserId === null) return;
+  const seat = getSeat(db, input.seatId);
+  if (!seat || seat.redeemedByUserId === null) return;
 
-  const admin = getTeamAdmin(db, coupon.teamId);
+  const admin = getTeamAdmin(db, seat.teamId);
   if (!admin) return;
 
   // A Notification announces an action the recipient didn't initiate —
   // the Team Admin claiming a Seat on their own Licence is no news.
-  if (admin.id === coupon.redeemedByUserId) return;
+  if (admin.id === seat.redeemedByUserId) return;
 
-  const claimer = getUser(db, coupon.redeemedByUserId);
-  const course = getCourse(db, coupon.courseId);
+  const claimer = getUser(db, seat.redeemedByUserId);
+  const course = getCourse(db, seat.courseId);
   if (!claimer || !course) return;
 
   await deliver(knock, SEAT_CLAIMED_WORKFLOW, {

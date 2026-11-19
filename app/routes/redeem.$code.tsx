@@ -210,7 +210,7 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   // The seat claim and enrollment have committed; a Knock failure inside
   // these is logged and swallowed, never surfaced to the claimer.
-  await notifySeatClaimed(db, { couponId: result.couponId });
+  await notifySeatClaimed(db, { seatId: result.couponId });
   await notifyNewEnrollment(db, { enrollmentId: result.enrollment.id });
 
   const course = getCourseById(result.enrollment.courseId);

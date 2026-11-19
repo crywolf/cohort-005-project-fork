@@ -1,11 +1,12 @@
 import { redirect } from "react-router";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Route } from "./+types/api.switch-user";
 import { db } from "~/db";
-import { TeamMemberRole, UserRole, teamMembers, users } from "~/db/schema";
+import { UserRole, users } from "~/db/schema";
 import { setCurrentUserId } from "~/lib/session";
 import { parseFormData } from "~/lib/validation";
+import { isTeamAdmin } from "~/lib/teams.server";
 
 const switchUserSchema = z.object({
   userId: z.coerce.number().int().positive("Invalid user ID"),
@@ -44,21 +45,12 @@ export async function action({ request, url }: Route.ActionArgs) {
     .from(users)
     .where(eq(users.id, parsed.data.userId))
     .get();
-  const isTeamAdmin = !!db
-    .select()
-    .from(teamMembers)
-    .where(
-      and(
-        eq(teamMembers.userId, parsed.data.userId),
-        eq(teamMembers.role, TeamMemberRole.Admin)
-      )
-    )
-    .get();
+  const teamAdmin = isTeamAdmin(parsed.data.userId);
 
   // Switching users while parked on a role-restricted page (e.g. testing
   // notifications as the instructor, then switching to a student) used to
   // redirect straight into a 403. Land somewhere the new user can see.
-  if (user && !canViewPath(redirectTo, user.role, isTeamAdmin)) {
+  if (user && !canViewPath(redirectTo, user.role, teamAdmin)) {
     return redirect("/", { headers: { "Set-Cookie": cookie } });
   }
 

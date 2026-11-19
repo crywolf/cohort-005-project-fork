@@ -10,7 +10,8 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
-import { UserRole, RefundStatus, users, teamMembers, TeamMemberRole } from "~/db/schema";
+import { UserRole, RefundStatus, users } from "~/db/schema";
+import { isTeamAdmin } from "~/lib/teams.server";
 import {
   readInAppNotificationPreferences,
   writeInAppNotificationPreference,
@@ -35,7 +36,7 @@ import {
 } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
 import { listRefundRequestsForBuyer } from "~/lib/refunds.server";
 
@@ -48,21 +49,6 @@ const notificationPreferenceSchema = z.object({
   categoryKey: z.enum(NOTIFICATION_CATEGORIES),
   enabled: z.enum(["true", "false"]).transform((value) => value === "true"),
 });
-
-function isTeamAdmin(userId: number) {
-  return (
-    db
-      .select()
-      .from(teamMembers)
-      .where(
-        and(
-          eq(teamMembers.userId, userId),
-          eq(teamMembers.role, TeamMemberRole.Admin)
-        )
-      )
-      .get() !== undefined
-  );
-}
 
 export function meta() {
   return [
@@ -98,10 +84,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     currentUserId
   );
   const notificationCategories = relevantNotificationCategories(
-    currentUser.role,
-    // The app-level role alone misses a Team Admin whose role is Student or
-    // Instructor — they still receive seat-claim notifications.
-    isTeamAdmin(currentUser.id)
+    currentUser.role
   ).map((categoryKey) => ({
     categoryKey,
     inApp: inAppPreferences[categoryKey],

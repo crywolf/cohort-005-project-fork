@@ -441,7 +441,7 @@ describe("notifySeatClaimed", () => {
     if (!seat) throw new Error("licence has no seats");
     const coupon = claimSeat(seat.id, member.id);
 
-    await notifySeatClaimed(db, { couponId: coupon.id }, client);
+    await notifySeatClaimed(db, { seatId: coupon.id }, client);
 
     expect(calls).toHaveLength(1);
     const call = calls[0];
@@ -469,7 +469,7 @@ describe("notifySeatClaimed", () => {
     const licence = seedTeamLicence(base.user.id, base.course.id, 3);
     const coupon = claimSeat(licence.coupons[0]?.id ?? -1, base.user.id);
 
-    await notifySeatClaimed(db, { couponId: coupon.id }, client);
+    await notifySeatClaimed(db, { seatId: coupon.id }, client);
 
     expect(calls).toEqual([]);
   });
@@ -482,7 +482,7 @@ describe("notifySeatClaimed", () => {
     const coupon = claimSeat(seat.id, member.id);
 
     await expect(
-      notifySeatClaimed(db, { couponId: coupon.id }, failingKnockClient())
+      notifySeatClaimed(db, { seatId: coupon.id }, failingKnockClient())
     ).resolves.toBeUndefined();
   });
 });
@@ -894,37 +894,22 @@ describe("writeInAppNotificationPreference", () => {
 
 describe("relevantNotificationCategories", () => {
   it("gives a Student Discussion activity and Purchases & refunds", () => {
-    expect(relevantNotificationCategories(schema.UserRole.Student, false)).toEqual([
+    expect(relevantNotificationCategories(schema.UserRole.Student)).toEqual([
       DISCUSSION_ACTIVITY_CATEGORY,
       PURCHASES_REFUNDS_CATEGORY,
     ]);
   });
 
-  it("gives an Instructor Discussion activity and New students", () => {
-    expect(relevantNotificationCategories(schema.UserRole.Instructor, false)).toEqual([
+  it("gives an Instructor all three — they can be a buyer too", () => {
+    expect(relevantNotificationCategories(schema.UserRole.Instructor)).toEqual([
       DISCUSSION_ACTIVITY_CATEGORY,
+      PURCHASES_REFUNDS_CATEGORY,
       NEW_STUDENTS_CATEGORY,
-    ]);
-  });
-
-  it("shows Purchases & refunds to a Team Admin whose app role is Instructor", () => {
-    expect(relevantNotificationCategories(schema.UserRole.Instructor, true)).toEqual([
-      DISCUSSION_ACTIVITY_CATEGORY,
-      NEW_STUDENTS_CATEGORY,
-      PURCHASES_REFUNDS_CATEGORY,
-    ]);
-  });
-
-  it("shows Purchases & refunds to a Team Admin whose app role is Student", () => {
-    expect(relevantNotificationCategories(schema.UserRole.Student, true)).toEqual([
-      DISCUSSION_ACTIVITY_CATEGORY,
-      PURCHASES_REFUNDS_CATEGORY,
     ]);
   });
 
   it("gives a Platform Admin no toggles — the refund-queue alert is always on", () => {
-    expect(relevantNotificationCategories(schema.UserRole.Admin, false)).toEqual([]);
-    expect(relevantNotificationCategories(schema.UserRole.Admin, true)).toEqual([]);
+    expect(relevantNotificationCategories(schema.UserRole.Admin)).toEqual([]);
   });
 });
 
