@@ -299,7 +299,6 @@ import {
   PURCHASES_REFUNDS_CATEGORY,
   NEW_STUDENTS_CATEGORY,
   NOTIFICATION_CATEGORIES,
-  relevantNotificationCategories,
   type NotificationCategoryKey,
 } from "./notification-preferences";
 export {
