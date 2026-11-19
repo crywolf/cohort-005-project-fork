@@ -1,0 +1,1 @@
+{{ data.claimerName }} claimed a seat in **{{ data.courseTitle }}** using one of your team licences.

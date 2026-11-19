@@ -1,0 +1,1 @@
+Your purchase of **{{ data.courseTitle }}** is confirmed. Total: ${{ data.amountPaid | divided_by: 100.0 | round: 2 }}.

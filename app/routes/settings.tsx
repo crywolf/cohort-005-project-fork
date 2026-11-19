@@ -11,7 +11,28 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
 import { UserRole, RefundStatus, users } from "~/db/schema";
-import { AlertTriangle } from "lucide-react";
+import {
+  readInAppNotificationPreferences,
+  writeInAppNotificationPreference,
+} from "~/lib/notifications.server";
+import {
+  relevantNotificationCategories,
+  DISCUSSION_ACTIVITY_CATEGORY,
+  NEW_STUDENTS_CATEGORY,
+  NOTIFICATION_CATEGORIES,
+  PURCHASES_REFUNDS_CATEGORY,
+  type NotificationCategoryKey,
+} from "~/lib/notification-preferences";
+import {
+  AlertTriangle,
+  Bell,
+  Lock,
+  MessageSquare,
+  ShoppingCart,
+  ShieldAlert,
+  UserPlus,
+  type LucideIcon,
+} from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
 import { eq } from "drizzle-orm";
@@ -21,6 +42,11 @@ import { listRefundRequestsForBuyer } from "~/lib/refunds.server";
 const settingsSchema = z.object({
   name: z.string().trim().min(1, "Name cannot be empty."),
   bio: z.string().trim().optional(),
+});
+
+const notificationPreferenceSchema = z.object({
+  categoryKey: z.enum(NOTIFICATION_CATEGORIES),
+  enabled: z.enum(["true", "false"]).transform((value) => value === "true"),
 });
 
 export function meta() {
@@ -51,6 +77,18 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const refundRequests = listRefundRequestsForBuyer(db, currentUserId);
 
+  // Read live from the Knock preference set, so a role acquired later makes
+  // its categories eligible at their defaults with no backfill.
+  const inAppPreferences = await readInAppNotificationPreferences(
+    currentUserId
+  );
+  const notificationCategories = relevantNotificationCategories(
+    currentUser.role
+  ).map((categoryKey) => ({
+    categoryKey,
+    inApp: inAppPreferences[categoryKey],
+  }));
+
   return {
     user: {
       id: currentUser.id,
@@ -60,6 +98,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       role: currentUser.role,
     },
     refundRequests,
+    notificationCategories,
   };
 }
 
@@ -80,6 +119,40 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   const formData = await request.formData();
+
+  // The Notifications card toggles one Notification Category's in-app
+  // channel in the person's Knock preference set — the only store.
+  if (formData.get("categoryKey")) {
+    const parsedPreference = parseFormData(
+      formData,
+      notificationPreferenceSchema
+    );
+
+    if (!parsedPreference.success) {
+      return data({ errors: parsedPreference.errors }, { status: 400 });
+    }
+
+    const { categoryKey, enabled } = parsedPreference.data;
+    const saved = await writeInAppNotificationPreference(
+      currentUserId,
+      categoryKey,
+      enabled
+    );
+
+    if (!saved) {
+      return data(
+        {
+          errors: {
+            preference: "Could not save your notification preference. Try again.",
+          },
+        },
+        { status: 502 }
+      );
+    }
+
+    return { preferenceSaved: true };
+  }
+
   const parsed = parseFormData(formData, settingsSchema);
 
   if (!parsed.success) {
@@ -97,8 +170,34 @@ export async function action({ request }: Route.ActionArgs) {
   return { success: true };
 }
 
+const NOTIFICATION_CATEGORY_COPY: Record<
+  NotificationCategoryKey,
+  { title: string; studentDescription: string; instructorDescription: string; icon: LucideIcon }
+> = {
+  [DISCUSSION_ACTIVITY_CATEGORY]: {
+    title: "Discussion activity",
+    studentDescription: "Replies to discussion questions you asked.",
+    instructorDescription:
+      "New discussion questions on your courses, and replies to questions you follow.",
+    icon: MessageSquare,
+  },
+  [PURCHASES_REFUNDS_CATEGORY]: {
+    title: "Purchases & refunds",
+    studentDescription:
+      "Purchase receipts, refund decisions, and seat claims on your courses.",
+    instructorDescription: "",
+    icon: ShoppingCart,
+  },
+  [NEW_STUDENTS_CATEGORY]: {
+    title: "New students",
+    studentDescription: "",
+    instructorDescription: "A new student enrolls in one of your courses.",
+    icon: UserPlus,
+  },
+};
+
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, refundRequests } = loaderData;
+  const { user, refundRequests, notificationCategories } = loaderData;
   const openCount = refundRequests.filter(
     (refundRequest) => refundRequest.status === RefundStatus.Open
   ).length;
@@ -188,6 +287,11 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
         </CardContent>
       </Card>
 
+      <NotificationPreferencesCard
+        role={user.role}
+        categories={notificationCategories}
+      />
+
       {refundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">
           <CardHeader>
@@ -236,6 +340,169 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
         </Card>
       )}
     </div>
+  );
+}
+
+function NotificationPreferencesCard({
+  role,
+  categories,
+}: {
+  role: UserRole;
+  categories: { categoryKey: NotificationCategoryKey; inApp: boolean }[];
+}) {
+  const fetcher = useFetcher<typeof action>();
+
+  useEffect(() => {
+    if (
+      fetcher.state === "idle" &&
+      fetcher.data &&
+      "preferenceSaved" in fetcher.data &&
+      fetcher.data.preferenceSaved
+    ) {
+      toast.success("Notification preference saved.");
+    }
+    if (
+      fetcher.state === "idle" &&
+      fetcher.data &&
+      "errors" in fetcher.data &&
+      fetcher.data.errors
+    ) {
+      const firstError = Object.values(fetcher.data.errors)[0] as
+        | string
+        | undefined;
+      if (firstError) toast.error(firstError);
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  return (
+    <Card className="mt-8 max-w-md">
+      <CardHeader>
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <Bell className="size-5" /> Notifications
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Choose what you're notified about.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {categories.length > 0 && (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="pb-2 font-medium">Category</th>
+                <th className="pb-2 font-medium">In app</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map(({ categoryKey, inApp }) => (
+                <NotificationCategoryRow
+                  key={categoryKey}
+                  role={role}
+                  categoryKey={categoryKey}
+                  inApp={inApp}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {role === UserRole.Admin && (
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <span className="flex items-center gap-2 font-medium">
+              <ShieldAlert className="size-4 text-muted-foreground" />
+              Platform admin alerts
+            </span>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Open refund requests are always delivered — they aren't a
+              preference.
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function NotificationCategoryRow({
+  role,
+  categoryKey,
+  inApp,
+}: {
+  role: UserRole;
+  categoryKey: NotificationCategoryKey;
+  inApp: boolean;
+}) {
+  const copy = NOTIFICATION_CATEGORY_COPY[categoryKey];
+  // A Team Admin whose app role is Instructor sees Purchases & refunds as
+  // the licence's buyer, not its instructor — fall back to the other
+  // persona's copy when the role's own copy is empty.
+  const description =
+    role === UserRole.Instructor
+      ? copy.instructorDescription || copy.studentDescription
+      : copy.studentDescription;
+  const Icon = copy.icon;
+
+  return (
+    <tr className="border-b last:border-0">
+      <td className="py-3 pr-4">
+        <span className="flex items-center gap-2 font-medium">
+          <Icon className="size-4 text-muted-foreground" />
+          {copy.title}
+        </span>
+        <p className="mt-0.5 pl-6 text-xs text-muted-foreground">{description}</p>
+        {categoryKey === PURCHASES_REFUNDS_CATEGORY && (
+          <p className="mt-1 pl-6">
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Lock className="size-3" />
+              Receipt and refund-decision emails are always sent.
+            </span>
+          </p>
+        )}
+      </td>
+      <td className="py-3 align-top">
+        <PreferenceToggle
+          categoryKey={categoryKey}
+          checked={inApp}
+          label={`${copy.title} in app`}
+        />
+      </td>
+    </tr>
+  );
+}
+
+function PreferenceToggle({
+  categoryKey,
+  checked,
+  label,
+}: {
+  categoryKey: NotificationCategoryKey;
+  checked: boolean;
+  label: string;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  const busy = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post">
+      <input type="hidden" name="categoryKey" value={categoryKey} />
+      <input type="hidden" name="enabled" value={String(!checked)} />
+      <button
+        type="submit"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        disabled={busy}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+          checked ? "bg-primary" : "bg-muted"
+        } ${busy ? "cursor-wait opacity-50" : "cursor-pointer"}`}
+      >
+        <span
+          className={`pointer-events-none block size-4 rounded-full bg-background shadow transition-transform ${
+            checked ? "translate-x-[18px]" : "translate-x-0.5"
+          }`}
+        />
+      </button>
+    </fetcher.Form>
   );
 }
 

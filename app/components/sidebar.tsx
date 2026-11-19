@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { cn } from "~/lib/utils";
 import { UserRole } from "~/db/schema";
 import { UserAvatar } from "~/components/user-avatar";
+import { NotificationBell } from "~/components/notification-bell";
 import {
   BookOpen,
   ChartColumn,
@@ -140,6 +141,16 @@ export function Sidebar({
         <NavLink to="/" className="text-lg font-bold tracking-tight">
           Cadence
         </NavLink>
+        {currentUser && (
+          <div className="ml-auto">
+            <NotificationBell
+              viewer={{
+                role: currentUser.role,
+                isTeamAdmin,
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <nav className="flex-1 space-y-1 p-3">
