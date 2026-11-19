@@ -245,6 +245,8 @@ function CreateCategoryRow({ onClose }: { onClose: () => void }) {
     if (fetcher.state === "idle" && fetcher.data?.error) {
       toast.error(fetcher.data.error);
     }
+    // onClose is recreated each render by callers; depending on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.state, fetcher.data]);
 
   function handleSave() {
