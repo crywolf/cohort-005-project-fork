@@ -392,7 +392,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
   let enrolled = false;
   let progress = 0;
-  let lessonProgressMap: Record<number, string> = {};
+  const lessonProgressMap: Record<number, string> = {};
   let nextLessonId: number | null = null;
   let refundOffer: RefundOffer | null = null;
 

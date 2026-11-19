@@ -65,10 +65,6 @@ const lessonParamsSchema = z.object({
   lessonId: z.coerce.number().int(),
 });
 
-const markCompleteSchema = z.object({
-  intent: z.literal("mark-complete"),
-});
-
 const createCommentSchema = z.object({
   intent: z.literal("create-comment"),
   body: z.string(),
@@ -519,7 +515,7 @@ function getBestAttempt(userId: number, quizId: number) {
     .get();
 }
 
-function calculateGrade(score: any): any {
+function calculateGrade(score: number): string {
   try {
     if (score >= 0.9) return "A";
     if (score >= 0.8) return "B";
@@ -532,7 +528,28 @@ function calculateGrade(score: any): any {
   }
 }
 
-function computeResult(userId: any, quizId: any, selectedAnswers: any): any {
+type QuizQuestionResult = {
+  questionId: number;
+  correct: boolean;
+  selectedOptionId: number | null;
+  correctOptionId: number | null;
+};
+
+type QuizResult = {
+  attemptId: number;
+  score: number;
+  passed: boolean;
+  grade: string;
+  totalCorrect: number;
+  totalQuestions: number;
+  questionResults: QuizQuestionResult[];
+};
+
+function computeResult(
+  userId: number,
+  quizId: number,
+  selectedAnswers: Record<number, number>
+): QuizResult | null {
   try {
     const quiz = db.select().from(quizzes).where(eq(quizzes.id, quizId)).get();
     if (!quiz) {
@@ -548,8 +565,8 @@ function computeResult(userId: any, quizId: any, selectedAnswers: any): any {
       .all();
 
     let correct = 0;
-    let total = questions.length;
-    const questionResults: any[] = [];
+    const total = questions.length;
+    const questionResults: QuizQuestionResult[] = [];
 
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
@@ -731,7 +748,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let lessonStatus: string | null = null;
   let lastWatchPosition = 0;
   let watchProgress = 0;
-  let lessonProgressMap: Record<number, string> = {};
+  const lessonProgressMap: Record<number, string> = {};
 
   if (currentUserId) {
     if (enrolled) {
