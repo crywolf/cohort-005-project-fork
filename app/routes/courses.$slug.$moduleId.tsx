@@ -13,7 +13,7 @@ import {
   LessonProgressStatus,
 } from "~/db/schema";
 import { and, eq, or } from "drizzle-orm";
-import { Card, CardContent, CardHeader } from "~/components/ui/card";
+import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 import { UserAvatar } from "~/components/user-avatar";
@@ -189,7 +189,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const currentUserId = await getCurrentUserId(request);
 
   let enrolled = false;
-  let lessonProgressMap: Record<number, string> = {};
+  const lessonProgressMap: Record<number, string> = {};
 
   if (currentUserId) {
     enrolled = isUserEnrolled(currentUserId, course.id);

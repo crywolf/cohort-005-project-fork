@@ -4,6 +4,8 @@ Do these checks in this order before you report a change to `app/` as complete:
 
 1. `npm run typecheck`
 2. `npm run test`
+3. `npm run build` — the only check that exercises Vite's client/server split, so it catches server-only modules leaking into a route's client bundle (`tsc` and `vitest` both pass on those)
+4. `npm run lint` — ESLint (`eslint .`), enforces no `any`, no non-null `!`, no unused vars
 
 ## When something breaks
 
