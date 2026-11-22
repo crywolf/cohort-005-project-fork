@@ -1,16 +1,31 @@
 import { createCookieSessionStorage } from "react-router";
 
+// The session secret must come from the environment. In production a missing
+// secret fails fast at startup — signing cookies with a known constant would
+// let anyone forge a session. Outside production (local dev, tests) the dev
+// secret keeps the app runnable without configuration.
+function sessionSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SESSION_SECRET must be set in production — refusing to sign cookies with a known secret."
+    );
+  }
+  return "cadence-dev-secret";
+}
+
 const sessionStorage = createCookieSessionStorage({
   cookie: {
     name: "cadence_session",
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secrets: ["cadence-dev-secret"],
+    secrets: [sessionSecret()],
   },
 });
 
-export async function getSession(request: Request) {
+function getSession(request: Request) {
   return sessionStorage.getSession(request.headers.get("Cookie"));
 }
 

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import type { Route } from "./+types/courses.$slug";
 import { getCurrentUserId } from "~/lib/session";
+import { requireUserId } from "~/lib/access.server";
 import { db } from "~/db";
 import {
   courses,
@@ -11,7 +12,6 @@ import {
   users,
   modules,
   lessons,
-  enrollments,
   lessonProgress,
   courseRatings,
   LessonProgressStatus,
@@ -50,7 +50,8 @@ import {
   getCountryTierInfo,
 } from "~/lib/ppp";
 import { parseFormData } from "~/lib/validation";
-import { MAX_RATING, MIN_RATING } from "~/lib/ratings";
+import { MAX_RATING, MIN_RATING } from "~/lib/domain-constants";
+import { isUserEnrolled } from "~/lib/enrollments";
 import { StarRating, StarRatingInput } from "~/components/star-rating";
 
 function getCourseBySlug(slug: string) {
@@ -130,17 +131,6 @@ function getLessonCountForCourse(courseId: number) {
     .get();
 
   return count?.count ?? 0;
-}
-
-function isUserEnrolled(userId: number, courseId: number) {
-  const enrollment = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-  return !!enrollment;
 }
 
 function getCourseLessonIds(courseId: number): number[] {
@@ -397,7 +387,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let refundOffer: RefundOffer | null = null;
 
   if (currentUserId) {
-    enrolled = isUserEnrolled(currentUserId, course.id);
+    enrolled = isUserEnrolled(db, currentUserId, course.id);
 
     if (enrolled) {
       refundOffer = getRefundOffer(db, currentUserId, course.id, new Date());
@@ -451,18 +441,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 // Enrollment is handled via the purchase confirmation page — this action only
 // records star ratings.
 export async function action({ params, request }: Route.ActionArgs) {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("You must be logged in to rate a course.", { status: 401 });
-  }
+  const currentUserId = await requireUserId(request);
 
   const course = getCourseBySlug(params.slug);
   if (!course) {
     throw data("Course not found", { status: 404 });
   }
 
-  if (!isUserEnrolled(currentUserId, course.id)) {
+  if (!isUserEnrolled(db, currentUserId, course.id)) {
     throw data("You must be enrolled in this course to rate it.", {
       status: 403,
     });

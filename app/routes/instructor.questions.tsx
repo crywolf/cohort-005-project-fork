@@ -12,9 +12,12 @@ import { Textarea } from "~/components/ui/textarea";
 import { UserAvatar } from "~/components/user-avatar";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, daysSince, formatRelativeTime } from "~/lib/utils";
-import { MIN_COMMENT_LENGTH, MAX_COMMENT_LENGTH } from "~/lib/comments";
 import { notifyDiscussionReplyPosted } from "~/lib/notifications.server";
 import { parseFormData } from "~/lib/validation";
+import {
+  MAX_COMMENT_LENGTH,
+  MIN_COMMENT_LENGTH,
+} from "~/lib/domain-constants";
 import { db } from "~/db";
 import {
   comments,

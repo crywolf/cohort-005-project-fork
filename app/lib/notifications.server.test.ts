@@ -4,12 +4,22 @@ import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 import {
-  defaultKnockClient,
-  defaultKnockPreferencesClient,
   DISCUSSION_ACTIVITY_CATEGORY,
   NEW_STUDENTS_CATEGORY,
   PURCHASES_REFUNDS_CATEGORY,
+  relevantNotificationCategories,
+} from "./notification-preferences";
+import {
+  defaultKnockClient,
+  defaultKnockPreferencesClient,
+  generateTestSigningKey,
   knockUserId,
+  recordingKnockClient,
+  recordingKnockPreferencesClient,
+  signKnockUserToken,
+  type KnockClient,
+} from "./knock.server";
+import {
   notifyDiscussionReplyPosted,
   notifyNewDiscussionQuestionPosted,
   notifyNewEnrollment,
@@ -18,13 +28,7 @@ import {
   notifyRefundRequestFiled,
   notifySeatClaimed,
   readInAppNotificationPreferences,
-  recordingKnockClient,
-  relevantNotificationCategories,
   writeInAppNotificationPreference,
-  recordingKnockPreferencesClient,
-  generateTestSigningKey,
-  signKnockUserToken,
-  type KnockClient,
 } from "./notifications.server";
 
 function failingKnockClient(): KnockClient {

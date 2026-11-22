@@ -1,11 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the session module
-const mockSession = new Map<string, string>();
+let mockDevCountry: string | null = null;
 vi.mock("~/lib/session", () => ({
-  getSession: vi.fn(async () => ({
-    get: (key: string) => mockSession.get(key),
-  })),
+  getDevCountry: vi.fn(async () => mockDevCountry),
 }));
 
 // Country resolution must never go to the network.
@@ -20,14 +18,14 @@ function makeRequest(headers: Record<string, string> = {}): Request {
 
 describe("resolveCountry", () => {
   beforeEach(() => {
-    mockSession.clear();
+    mockDevCountry = null;
     mockFetch.mockReset();
   });
 
   // ─── Priority Ordering ───
 
   it("uses dev session override first", async () => {
-    mockSession.set("devCountry", "IN");
+    mockDevCountry = "IN";
     const result = await resolveCountry(
       makeRequest({ "CF-IPCountry": "US", "X-Forwarded-For": "1.2.3.4" }),
     );
@@ -55,13 +53,13 @@ describe("resolveCountry", () => {
   // ─── Dev Override Behavior ───
 
   it("normalizes dev country to uppercase", async () => {
-    mockSession.set("devCountry", "pl");
+    mockDevCountry = "pl";
     const result = await resolveCountry(makeRequest());
     expect(result).toBe("PL");
   });
 
   it("ignores dev country if not exactly 2 characters", async () => {
-    mockSession.set("devCountry", "USA");
+    mockDevCountry = "USA";
     const result = await resolveCountry(makeRequest());
     expect(result).toBeNull();
   });

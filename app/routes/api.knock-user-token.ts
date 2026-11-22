@@ -1,7 +1,7 @@
 import { data } from "react-router";
 import type { Route } from "./+types/api.knock-user-token";
 import { requireUserId } from "~/lib/access.server";
-import { knockUserId, signKnockUserToken } from "~/lib/notifications.server";
+import { knockUserId, signKnockUserToken } from "~/lib/knock.server";
 
 /**
  * Issues the pieces the client-side Notification Feed needs to connect to

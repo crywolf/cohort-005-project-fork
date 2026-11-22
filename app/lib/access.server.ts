@@ -5,12 +5,14 @@ import {
   UserRole,
   users,
   courses,
-  enrollments,
   purchases,
+  TeamMemberRole,
+  teamMembers,
 } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
 import { checkPppAccess } from "~/lib/ppp";
+import { isUserEnrolled } from "~/lib/enrollments";
 
 function getUserById(id: number) {
   return db.select().from(users).where(eq(users.id, id)).get();
@@ -18,20 +20,6 @@ function getUserById(id: number) {
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
-}
-
-function findEnrollment(userId: number, courseId: number) {
-  return db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-}
-
-function isUserEnrolled(userId: number, courseId: number) {
-  return !!findEnrollment(userId, courseId);
 }
 
 function findPurchase(userId: number, courseId: number) {
@@ -97,7 +85,7 @@ export async function getAccess(
   const isAdmin = user.role === UserRole.Admin;
   const isOwningInstructor = course?.instructorId === userId;
   const isStaff = isAdmin || isOwningInstructor;
-  const enrolled = isUserEnrolled(userId, courseId);
+  const enrolled = isUserEnrolled(db, userId, courseId);
 
   // PPP only restricts students who bought at a discount — staff are exempt.
   let ppp = {
@@ -181,6 +169,58 @@ export async function requireStaff(
   }
 
   return access;
+}
+
+// ─── Platform roles ───
+// Questions that span courses, answered by role: platform admins, instructors,
+// and Team Admins.
+
+/**
+ * Throws unless the user is an instructor — for pages that are the
+ * instructor's own workspace (the instructor dashboard, course creation).
+ * Admins administer the platform; they don't get an instructor dashboard.
+ */
+export async function requireInstructor(request: Request) {
+  const userId = await requireUserId(request);
+  const user = getUserById(userId);
+
+  if (!user || user.role !== UserRole.Instructor) {
+    throw data("Only instructors can access this page.", { status: 403 });
+  }
+
+  return user;
+}
+
+/**
+ * Throws unless the user is a Platform Admin — for pages that administer the
+ * whole platform (users, courses, refunds, categories).
+ */
+export async function requireAdmin(request: Request) {
+  const userId = await requireUserId(request);
+  const user = getUserById(userId);
+
+  if (!user || user.role !== UserRole.Admin) {
+    throw data("Only admins can access this page.", { status: 403 });
+  }
+
+  return user;
+}
+
+// Whether this person is a Team Admin — the member who speaks for the team on
+// its Team Licence (settings, the DevUI switch-user guard).
+export function isTeamAdmin(userId: number) {
+  return (
+    db
+      .select()
+      .from(teamMembers)
+      .where(
+        and(
+          eq(teamMembers.userId, userId),
+          eq(teamMembers.role, TeamMemberRole.Admin)
+        )
+      )
+      .get() !== undefined
+  );
 }
 
 /**
