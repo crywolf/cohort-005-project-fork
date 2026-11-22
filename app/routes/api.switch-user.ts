@@ -6,7 +6,7 @@ import { db } from "~/db";
 import { UserRole, users } from "~/db/schema";
 import { setCurrentUserId } from "~/lib/session";
 import { parseFormData } from "~/lib/validation";
-import { isTeamAdmin } from "~/lib/teams.server";
+import { isTeamAdmin } from "~/lib/access.server";
 
 const switchUserSchema = z.object({
   userId: z.coerce.number().int().positive("Invalid user ID"),
