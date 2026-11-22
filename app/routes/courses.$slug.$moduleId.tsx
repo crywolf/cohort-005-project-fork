@@ -5,7 +5,6 @@ import { db } from "~/db";
 import {
   categories,
   courses,
-  enrollments,
   lessonProgress,
   lessons,
   modules,
@@ -13,6 +12,7 @@ import {
   LessonProgressStatus,
 } from "~/db/schema";
 import { and, eq, or } from "drizzle-orm";
+import { isUserEnrolled } from "~/lib/enrollments";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -111,18 +111,6 @@ function getModuleWithLessons(id: number) {
   return { ...mod, lessons: moduleLessons };
 }
 
-function isUserEnrolled(userId: number, courseId: number) {
-  const existing = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-
-  return !!existing;
-}
-
 function getLessonProgressForCourse(userId: number, courseId: number) {
   const courseModules = db
     .select({ id: modules.id })
@@ -192,7 +180,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const lessonProgressMap: Record<number, string> = {};
 
   if (currentUserId) {
-    enrolled = isUserEnrolled(currentUserId, course.id);
+    enrolled = isUserEnrolled(db, currentUserId, course.id);
 
     if (enrolled) {
       const progressRecords = getLessonProgressForCourse(
