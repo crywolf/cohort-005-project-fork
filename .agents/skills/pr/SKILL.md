@@ -9,6 +9,10 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
+For creating, stacking, discovering, or merging pull requests — including
+stacked PRs via the installed `gh stack` extension — see
+[`docs/agents/pull-requests.md`](../../docs/agents/pull-requests.md).
+
 Use this template for writing the PR body:
 
 ```markdown
