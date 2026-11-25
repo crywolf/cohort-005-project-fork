@@ -52,6 +52,51 @@ change you are reporting on trust.
 Screenshots are PR evidence: a before and an after for a change that shows in
 the UI.
 
+## Embedding screenshots in a PR
+
+Screenshots are evidence, not source. Never commit them to the PR branch or
+store them in releases or gists — host them in a **separate orphan commit** on
+a `pr-assets/<pr-name>` branch, and link them from the PR body with
+`blob/<sha>/<file>.png?raw=true` URLs. The orphan commit shares no history
+with the branch, so the PR diff stays clean, and pinning the SHA keeps the
+links working after merge.
+
+```bash
+# Build the orphan commit with git plumbing (never touches the worktree)
+export GIT_INDEX_FILE=/tmp/pr-assets-index
+git read-tree --empty
+for f in before after; do
+  sha=$(git hash-object -w /tmp/$f.png)
+  git update-index --add --cacheinfo 100644,$sha,$f.png
+done
+commit=$(printf "PR screenshots for <branch-name> (#<n>)\n" | git commit-tree $(git write-tree))
+git branch pr-assets/<pr-name> $commit
+unset GIT_INDEX_FILE
+git push origin pr-assets/<pr-name>
+
+# Reference in the PR body (markdown form renders as <img>):
+# ![after](https://github.com/<owner>/<repo>/blob/<full-sha>/after.png?raw=true)
+```
+
+Verify before reporting: `curl -sIL` each URL returns `200` + `content-type:
+image/png`, and the PR's rendered HTML (issues API with the
+`application/vnd.github.html+json` accept header) contains `<img>` tags, not
+links.
+
+Dead ends, verified — don't retry them:
+
+- **Releases**: user rejected; don't create them for evidence.
+- **Gists via API**: GitHub no longer decodes binary content, so the raw file
+  serves as `text/plain` + `nosniff` — browsers refuse to render it.
+- **`releases/download/...` URLs in markdown `![…]`**: GitHub's sanitizer
+  turns them into plain links, not images.
+- **Relative paths in the PR body** (`docs/…`): resolve against the default
+  branch, not the PR branch — broken links.
+- **`![](<raw.githubusercontent…>)` from the PR branch**: renders, but
+  requires committing the images into the PR branch.
+- **HTML `<img>` tags** do survive the sanitizer and render `releases/download`
+  URLs — but that still requires release-hosted files, so it's moot here.
+
 ## Two things that will bite you
 
 **Hydration lags "networkidle".** The button is in the server HTML before
