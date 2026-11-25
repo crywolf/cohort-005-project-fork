@@ -23,12 +23,18 @@ describe("renderComment", () => {
       );
 
       expect(html).toContain("shiki");
+      // Plain-text output has no per-token colors; a colored span proves the
+      // typescript grammar ran rather than the "text" fallback.
+      expect(html).toMatch(/<span style="color:/);
       expect(html).toContain("const");
     });
 
     it("falls back to a plain block for unknown languages", async () => {
       const html = await renderComment(markdown("```brainfuck\n+++\n```"));
 
+      // The unknown language is not dropped — it renders through shiki as
+      // plain text. A shiki-less <pre> would mean the catch path ran.
+      expect(html).toContain("shiki github-dark");
       expect(html).toContain("<pre");
       expect(html).toContain("+++");
     });
@@ -84,8 +90,21 @@ describe("renderComment", () => {
 
       expect(html).not.toContain("<b onclick");
       expect(html).toContain("&lt;b onclick");
+      expect(html).toContain("&#39;");
     });
 
+    it("escapes ampersands and quotes in a raw HTML block", async () => {
+      const html = await renderComment(
+        markdown(`<div class="x" onclick="y()">a & b</div>`)
+      );
+
+      // Raw HTML blocks reach escapeHtml whole; marked escapes the text
+      // between inline tags itself, so this is the test that pins the
+      // entity map.
+      expect(html).toContain(
+        "&lt;div class=&quot;x&quot; onclick=&quot;y()&quot;&gt;a &amp; b&lt;/div&gt;"
+      );
+    });
     it("escapes a style tag", async () => {
       const html = await renderComment(
         markdown("<style>body{display:none}</style>")
@@ -101,9 +120,59 @@ describe("renderComment", () => {
         markdown("[docs](https://example.test/a)")
       );
 
-      expect(html).toContain('href="https://example.test/a"');
-      expect(html).toContain('rel="nofollow noopener noreferrer"');
+      expect(html).toContain(
+        'href="https://example.test/a" rel="nofollow noopener noreferrer"'
+      );
       expect(html).toContain('target="_blank"');
+      // An untitled link must not grow a title attribute.
+      expect(html).not.toContain("title=");
+    });
+
+    it("renders a link title", async () => {
+      const html = await renderComment(
+        markdown('[docs](https://example.test "the title")')
+      );
+
+      expect(html).toContain('title="the title"');
+    });
+
+    it("trims whitespace around a link destination", async () => {
+      const html = await renderComment(
+        markdown("[docs]( https://example.test/a )")
+      );
+
+      expect(html).toContain('href="https://example.test/a"');
+    });
+
+    it("trims a relative link destination", async () => {
+      const html = await renderComment(
+        markdown("[lesson]( /courses/x/lessons/1 )")
+      );
+
+      expect(html).toContain('href="/courses/x/lessons/1"');
+    });
+
+    it("trims spaces inside an angle-bracket destination", async () => {
+      const html = await renderComment(markdown("[docs](</a >)"));
+
+      // marked keeps spaces inside a <...> destination; safeHref must
+      // trim them before the relative-link branch and the href output.
+      expect(html).toContain('href="/a"');
+    });
+    it("downgrades an empty link to plain text", async () => {
+      const html = await renderComment(markdown("[x]()"));
+
+      expect(html).not.toContain("<a ");
+      expect(html).toContain("x");
+    });
+
+    it("keeps relative links", async () => {
+      const html = await renderComment(
+        markdown("[lesson](/courses/x/lessons/1)")
+      );
+
+      expect(html).toContain('href="/courses/x/lessons/1"');
+      expect(html).toContain("lesson");
     });
 
     it("downgrades a javascript: link to plain text", async () => {

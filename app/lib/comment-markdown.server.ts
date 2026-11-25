@@ -33,7 +33,6 @@ const COMMENT_LANGS = [
   "yaml",
   "markdown",
   "text",
-  "plaintext",
 ];
 
 let highlighter: Highlighter | null = null;
@@ -63,14 +62,24 @@ function escapeHtml(value: string): string {
  * link is downgraded to plain text.
  */
 function safeHref(href: string | null): string | null {
+  // marked always passes a string ("" for an empty `[link]()`), never null —
+  // the !href guard only keeps the type honest. An empty string fails the
+  // URL parse below and lands in the catch, so this line is not load-bearing.
   if (!href) return null;
 
   const trimmed = href.trim();
+
+  // Relative links stay on our own origin, so they're safe.
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    return trimmed;
+  }
 
   try {
     const url = new URL(trimmed);
     return SAFE_LINK_PROTOCOLS.includes(url.protocol) ? url.href : null;
   } catch {
+    // An explicit null, not a fall-through: callers treat every falsy return
+    // the same, but the type promises string | null, never undefined.
     return null;
   }
 }
@@ -81,6 +90,8 @@ export async function renderComment(markdown: Markdown): Promise<string> {
   const renderer = new Renderer();
 
   renderer.code = ({ text, lang }) => {
+    // An empty lang string renders exactly like "text" in shiki, so swapping
+    // the fallback is unobservable by design.
     const language = lang && COMMENT_LANGS.includes(lang) ? lang : "text";
     try {
       return hl.codeToHtml(text, { lang: language, theme: "github-dark" });
@@ -103,6 +114,8 @@ export async function renderComment(markdown: Markdown): Promise<string> {
   };
 
   // No images in comments — avoids tracking pixels and layout-breaking uploads.
+  // marked always passes text as a string ("" for an empty alt), so the ??
+  // branch only keeps the type honest.
   renderer.image = ({ text }) => escapeHtml(text ?? "");
 
   return marked.parse(markdown, { renderer, async: false }) as string;
