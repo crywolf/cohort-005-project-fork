@@ -168,7 +168,18 @@ export function getLessonProgressForCourse(
     .all();
 }
 
-export function markLessonComplete(db: Db, userId: number, lessonId: number) {
+type CompleteLessonArgs = {
+  lessonId: number;
+  completedAt: Date;
+};
+
+export function markLessonComplete(
+  db: Db,
+  userId: number,
+  args: CompleteLessonArgs
+) {
+  const { lessonId, completedAt } = args;
+  const at = completedAt.toISOString();
   const existing = getLessonProgress(db, userId, lessonId);
 
   if (existing) {
@@ -176,7 +187,7 @@ export function markLessonComplete(db: Db, userId: number, lessonId: number) {
       .update(lessonProgress)
       .set({
         status: LessonProgressStatus.Completed,
-        completedAt: new Date().toISOString(),
+        completedAt: at,
       })
       .where(eq(lessonProgress.id, existing.id))
       .returning()
@@ -189,7 +200,7 @@ export function markLessonComplete(db: Db, userId: number, lessonId: number) {
       userId,
       lessonId,
       status: LessonProgressStatus.Completed,
-      completedAt: new Date().toISOString(),
+      completedAt: at,
     })
     .returning()
     .get();

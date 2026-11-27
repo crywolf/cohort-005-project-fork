@@ -17,6 +17,7 @@ export {
 } from "./lib/lesson-page.server";
 export {
   getQuizByLessonId,
+  getQuizById,
   getQuizWithQuestions,
   getBestAttempt,
   calculateGrade,

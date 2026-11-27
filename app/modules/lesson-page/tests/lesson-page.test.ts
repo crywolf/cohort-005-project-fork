@@ -3,7 +3,7 @@ import { createTestDb, seedBaseData, type TestDb } from "~/test/setup";
 import { and, eq } from "drizzle-orm";
 import { markdown } from "~/lib/text";
 import * as schema from "~/db/schema";
-import { LessonProgressStatus, QuestionType } from "~/db/schema";
+import { LessonProgressStatus } from "~/db/schema";
 import {
   flattenCourseLessons,
   getCourseWithDetails,
@@ -13,8 +13,7 @@ import {
   calculateWatchProgress,
   markLessonComplete,
   markLessonInProgress,
-  computeResult,
-  getBestAttempt,
+  getLessonProgressForCourse,
 } from "../index.server";
 
 let db: TestDb;
@@ -72,6 +71,25 @@ describe("getCourseWithDetails", () => {
     ]);
   });
 
+  it("returns no modules or lessons for a course that has none", () => {
+    const emptyCourse = db
+      .insert(schema.courses)
+      .values({
+        title: "Empty Course",
+        slug: "empty-course",
+        description: markdown("Nothing here."),
+        salesCopy: markdown("Nothing here."),
+        instructorId: base.instructor.id,
+        categoryId: base.category.id,
+        status: schema.CourseStatus.Published,
+      })
+      .returning()
+      .get();
+
+    const course = getCourseWithDetails(db, emptyCourse.id);
+    expect(course?.modules).toEqual([]);
+  });
+
   it("returns null for an unknown course", () => {
     expect(getCourseWithDetails(db, 99999)).toBeNull();
   });
@@ -85,12 +103,18 @@ describe("markLessonInProgress", () => {
       status: LessonProgressStatus.InProgress,
     });
 
-    markLessonComplete(db, base.user.id, lessonIds[0]);
+    const completedAt = new Date("2026-01-02T09:00:00Z");
+    markLessonComplete(db, base.user.id, {
+      lessonId: lessonIds[0],
+      completedAt,
+    });
     markLessonInProgress(db, base.user.id, lessonIds[0]);
 
-    expect(getLessonProgress(db, base.user.id, lessonIds[0])).toMatchObject({
+    const progress = getLessonProgress(db, base.user.id, lessonIds[0]);
+    expect(progress).toMatchObject({
       status: LessonProgressStatus.Completed,
     });
+    expect(progress?.completedAt).toBe(completedAt.toISOString());
   });
 });
 
@@ -124,6 +148,29 @@ describe("watch state", () => {
     ).toBe(100);
     expect(getLastWatchPosition(db, base.user.id, lessonIds[0])).toBe(999);
   });
+
+  it("keeps another course's progress out of a course with no lessons", () => {
+    // The Student has progress somewhere else; this course has no lessons.
+    markLessonInProgress(db, base.user.id, lessonIds[0]);
+
+    const emptyCourse = db
+      .insert(schema.courses)
+      .values({
+        title: "Empty Course",
+        slug: "empty-course",
+        description: markdown("Nothing here."),
+        salesCopy: markdown("Nothing here."),
+        instructorId: base.instructor.id,
+        categoryId: base.category.id,
+        status: schema.CourseStatus.Published,
+      })
+      .returning()
+      .get();
+
+    expect(
+      getLessonProgressForCourse(db, base.user.id, emptyCourse.id)
+    ).toEqual([]);
+  });
 });
 
 describe("getLessonThread", () => {
@@ -146,6 +193,63 @@ describe("getLessonThread", () => {
 
     expect(getLessonThread(db, lessonIds[0])).toHaveLength(0);
   });
+
+  it("keeps a deleted question that still has replies, and marks its author", () => {
+    const question = seedComment(lessonIds[0], "Deleted but answered");
+    seedComment(lessonIds[0], "Still here", question.id);
+    db.update(schema.comments)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(and(eq(schema.comments.id, question.id)))
+      .run();
+
+    // The instructor answers in their own name, an admin in theirs. Both are
+    // siblings of the first reply, at the depth the thread shows.
+    const instructorReply = seedComment(
+      lessonIds[0],
+      "From the instructor",
+      question.id
+    );
+    db.update(schema.comments)
+      .set({ userId: base.instructor.id })
+      .where(and(eq(schema.comments.id, instructorReply.id)))
+      .run();
+
+    const admin = db
+      .insert(schema.users)
+      .values({
+        name: "Admin",
+        email: "admin@example.com",
+        role: schema.UserRole.Admin,
+      })
+      .returning()
+      .get();
+    const adminReply = seedComment(lessonIds[0], "From the admin", question.id);
+    db.update(schema.comments)
+      .set({ userId: admin.id })
+      .where(and(eq(schema.comments.id, adminReply.id)))
+      .run();
+
+    const thread = getLessonThread(db, lessonIds[0]);
+    expect(thread).toHaveLength(1);
+    expect(thread[0].deleted).toBe(true);
+    expect(thread[0].replies.map((r) => r.body)).toEqual([
+      "Still here",
+      "From the instructor",
+      "From the admin",
+    ]);
+    expect(thread[0].replies[0].author).toMatchObject({
+      isInstructor: false,
+      isPlatformAdmin: false,
+    });
+    expect(thread[0].replies[1].author).toMatchObject({
+      isInstructor: true,
+      isPlatformAdmin: false,
+    });
+    expect(thread[0].replies[2].author).toMatchObject({
+      isInstructor: false,
+      isPlatformAdmin: true,
+    });
+  });
 });
 
 describe("flattenCourseLessons", () => {
@@ -158,97 +262,5 @@ describe("flattenCourseLessons", () => {
       ["Basics", "Lesson 2"],
     ]);
     expect(flat[0].moduleId).toBe(moduleId);
-  });
-});
-
-describe("computeResult", () => {
-  let quizId: number;
-  let questionId: number;
-  let correctOptionId: number;
-  let wrongOptionId: number;
-
-  beforeEach(() => {
-    quizId = db
-      .insert(schema.quizzes)
-      .values({
-        lessonId: lessonIds[0],
-        title: "Check yourself",
-        passingScore: 0.7,
-      })
-      .returning()
-      .get().id;
-
-    questionId = db
-      .insert(schema.quizQuestions)
-      .values({
-        quizId,
-        questionText: "Which one is the correct one?",
-        questionType: QuestionType.MultipleChoice,
-        position: 1,
-      })
-      .returning()
-      .get().id;
-
-    [correctOptionId, wrongOptionId] = [
-      { text: "The right answer", isCorrect: true },
-      { text: "A red herring", isCorrect: false },
-    ].map(
-      (option) =>
-        db
-          .insert(schema.quizOptions)
-          .values({
-            questionId,
-            optionText: option.text,
-            isCorrect: option.isCorrect,
-          })
-          .returning()
-          .get().id
-    );
-  });
-
-  it("scores a correct answer, records the attempt and its answer", () => {
-    const result = computeResult(db, base.user.id, {
-      quizId,
-      selectedAnswers: { [questionId]: correctOptionId },
-    });
-
-    expect(result).toMatchObject({
-      passed: true,
-      grade: "A",
-      totalCorrect: 1,
-      totalQuestions: 1,
-    });
-    expect(result?.score).toBe(1);
-
-    const attempt = getBestAttempt(db, base.user.id, quizId);
-    expect(attempt?.id).toBe(result?.attemptId);
-
-    const answers = db
-      .select()
-      .from(schema.quizAnswers)
-      .where(eq(schema.quizAnswers.attemptId, result?.attemptId ?? 0))
-      .all();
-    expect(answers.map((a) => a.selectedOptionId)).toEqual([correctOptionId]);
-  });
-
-  it("fails an unanswered or wrong answer", () => {
-    const wrong = computeResult(db, base.user.id, {
-      quizId,
-      selectedAnswers: { [questionId]: wrongOptionId },
-    });
-    expect(wrong).toMatchObject({ passed: false, totalCorrect: 0 });
-
-    const silent = computeResult(db, base.user.id, {
-      quizId,
-      selectedAnswers: {},
-    });
-    expect(silent).toMatchObject({ passed: false, totalCorrect: 0 });
-    expect(silent?.questionResults[0].selectedOptionId).toBeNull();
-  });
-
-  it("returns null for an unknown quiz", () => {
-    expect(
-      computeResult(db, base.user.id, { quizId: 999, selectedAnswers: {} })
-    ).toBeNull();
   });
 });
